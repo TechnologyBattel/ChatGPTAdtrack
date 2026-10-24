@@ -358,6 +358,22 @@ Retention jobs, deletion/export flow, consent audit, DPA/subprocessor list, DPDP
 
 ---
 
+## 8a. Progress since this plan
+
+Slices 0–4 shipped as a working demo in one session, split across the six
+workstreams in `docs/WORKSTREAMS.md`:
+
+| Slice | State | Note |
+|---|---|---|
+| 0 Foundation | ✅ done | Vite + React + TS + Tailwind, tests, `npm run verify` |
+| 1 Shell | 🟡 partial | single page ships; auth/roles still pending |
+| 2 Tracking | ⛔ not started | needs Firebase + keys; `/track` contract designed |
+| 3 Reporting | 🟡 demo | engine + answers built on deterministic demo data, no live sync |
+| 4 Research | ✅ v1 | clustering, scoring, hint validators, CSV export |
+| 5 Push/experiments | ⛔ not started | needs Advertiser API key |
+| 6 Attribution | 🟡 demo | CAC/ROAS logic real, data synthetic |
+| 7 Compliance | ⛔ not started | PII scrubbing ships in research; consent/intake pending |
+
 ## 9. Recommended next action
 
 Start **Slice 0 today** (half a day, no dependencies, no keys), then **Slice 1** while the first-user and offer questions are answered. Do not start the keyword-research UI before Slice 2's tracking is live, or the research module will have nothing to learn from.
