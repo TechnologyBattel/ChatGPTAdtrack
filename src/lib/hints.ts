@@ -34,7 +34,12 @@ export function diffHints(current: string[], proposed: string[]): HintDiff {
   const removed = current.filter((hint) => !proposedKeys.has(key(hint)));
   const kept = proposed.filter((hint) => currentKeys.has(key(hint)) && seen.has(key(hint)));
 
-  return { added, removed, kept: [...new Map(kept.map((h) => [key(h), h])).values()], changed: added.length + removed.length };
+  return {
+    added,
+    removed,
+    kept: [...new Map(kept.map((h) => [key(h), h])).values()],
+    changed: added.length + removed.length,
+  };
 }
 
 export function describeDiff(diff: HintDiff): string {

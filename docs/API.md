@@ -13,9 +13,41 @@ browser ──/api/*──▶ our server (server/dev.mjs locally, Cloud Run in p
 ## Running it
 
 ```bash
-npm run api      # API server on 0.0.0.0:8787
+npm run api      # API server on 0.0.0.0:8787  (server/server.mjs)
 npm run dev      # web app on 0.0.0.0:5173, proxies /api -> 8787
 ```
+
+`server/dev.mjs` remains as an alias that imports `server/server.mjs`, so older
+scripts and notes keep working.
+
+## Security model
+
+| Route | Auth | Extra guards |
+|---|---|---|
+| `GET /api/health` | optional | Unauthenticated callers get `{ok, mode}` only |
+| `POST /api/consent` | none | Origin allowlist, per-IP rate limit |
+| `POST /api/track` | none, but a **consent id** is required | Origin allowlist, per-IP rate limit, body cap |
+| `GET /api/dataset` | token | — |
+| `GET /api/adgroups` | token | — |
+| `POST /api/adgroups/:id/hints` | token, **admin or owner** | Reversible, audited |
+| `POST /api/dev/session` | none | Dev mode only; 404 in production |
+
+Auth is pluggable:
+
+```js
+createAuth({ mode: 'dev', devToken, devRole })            // shared token, local/dev
+createAuth({ mode: 'firebase', verifyToken })             // Firebase ID tokens
+createAuth({ mode: 'firebase', verifyToken: fakeVerifier })// tests, no network
+```
+
+`AUTH_MODE=firebase` uses `firebase-admin` (lazily imported) to verify the ID token,
+including revocation, and reads the role from the `role` custom claim. An unknown or
+missing role becomes `viewer`, never a write role. Production refuses to start with
+`AUTH_MODE=dev` or with no `AUTH_MODE` at all.
+
+Writes are gated **before** any upstream call: an unauthenticated or under-privileged
+push returns 401/403 and the OpenAI API is never contacted. Both the unit tests and
+`scripts/e2e-push.mjs` assert this.
 
 `vite.config.ts` proxies `/api`, so the preview URL works without CORS and the
 browser never needs to resolve `localhost`.
@@ -64,6 +96,24 @@ Live mapping rules:
 - `conversionsNative` includes 1-day view-through; `viewThrough` is kept separately
   so the native/internal comparison stays legible.
 
+### `POST /api/consent`
+
+Records a grant and returns a signed id. The browser must call this *before* any
+event, and store the id with the session.
+
+```json
+{ "granted": true, "scopes": ["measurement"], "subjectHash": "optional" }
+```
+
+```json
+{ "consentId": "eyJ2Ijox….Xk3…", "scopes": ["measurement"], "expiresAt": "2027-04-22T…" }
+```
+
+Refuses `granted: false` with `400 consent_not_granted`, and refuses a request with no
+supported scope. The id is an HMAC-SHA256 signature over a base64url payload
+(`{v, jti, scopes, sub, iat, exp}`); verification is stateless, so no database is
+needed to demo it. **Production still needs to persist the grant** for the audit trail.
+
 ### `POST /api/track`
 
 Server-side event intake. The Pixel's browser copy and this call must share
@@ -74,7 +124,7 @@ Server-side event intake. The Pixel's browser copy and this call must share
   "eventName": "lead_created",
   "eventId": "evt_9f3c",
   "sourceUrl": "https://shop.example.com/thanks",
-  "consent": true,
+  "consentId": "eyJ2Ijox….Xk3…",
   "oppref": "gAAAA…",
   "obref": "8f1c…",
   "amountMinor": 149900,
@@ -82,11 +132,17 @@ Server-side event intake. The Pixel's browser copy and this call must share
 }
 ```
 
+`consent: true` is **rejected**: a boolean is not consent, because the client can
+always send `true`. Send the signed id instead.
+
 Rules enforced server-side, not trusted from the client:
 
 | Check | Failure |
 |---|---|
-| `consent === true` | `403 consent_required` — no request is made upstream |
+| A server-issued consent id, valid signature, unexpired, right scope | `403 consent_required` / `consent_invalid` / `consent_expired` / `consent_scope_missing` |
+| Origin in `TRACK_ORIGINS` | `403 origin_not_allowed` |
+| Per-IP rate limit (`RATE_LIMIT_PER_MINUTE`, default 60/min) | `429 rate_limited` |
+| Body under `MAX_BODY_BYTES` (default 256 KB) | `413 payload_too_large` |
 | `eventId` present | `400 missing_event_id` |
 | event name in the supported list | `400 unsupported_event` |
 | `amount` always has a currency | `400 missing_currency` |
@@ -129,9 +185,28 @@ The API is stateless, so it deploys as a container:
 gcloud run deploy adtrack-api \
   --source . \
   --region asia-south1 \
-  --set-secrets OPENAI_ADS_API_KEY=ads-key:latest,OPENAI_CONVERSIONS_API_KEY=capi-key:latest,OPENAI_PIXEL_ID=pixel-id:latest \
+  --set-secrets OPENAI_ADS_API_KEY=ads-key:latest,OPENAI_CONVERSIONS_API_KEY=capi-key:latest,OPENAI_PIXEL_ID=pixel-id:latest,CONSENT_SECRET=consent-secret:latest \
+  --set-env-vars AUTH_MODE=firebase,FIREBASE_PROJECT_ID=your-project,TRACK_ORIGINS=https://app.example.com \
   --allow-unauthenticated
 ```
+
+`--allow-unauthenticated` is required for the public `/api/track` and `/api/health`
+routes. Everything else is protected by the app's own auth gate, which is why the
+production start-up guards matter: the container refuses to boot with dev auth.
+
+The image runs as the unprivileged `node` user, uses `tini` as PID 1, and carries a
+`HEALTHCHECK` that probes `GET /api/health`.
+
+> **Rate limiting is per instance.** It is an in-memory fixed window, so with N
+> replicas the effective limit is N × the configured value. Use a shared store before
+> relying on it for anything that matters.
+
+## Deployment notes
+
+- `TRACK_ORIGINS` empty means **no** cross-origin tracking. Set it explicitly.
+- `TRACK_REQUIRE_ORIGIN=true` also refuses server-to-server calls that send no Origin.
+- Leave `ADS_API_BASE` / `EVENTS_API_BASE` unset in production; they exist only so the
+  e2e stub can stand in for OpenAI.
 
 Then set `VITE_API_BASE=https://adtrack-api-…run.app` for the web build, or front
 both behind one domain and keep the `/api` prefix. Cloud Functions are the
@@ -142,9 +217,11 @@ handlers in `server/core.mjs` are already pure and env-injected so they port as-
 
 | Layer | Where | Covers |
 |---|---|---|
+| Security rules | `src/lib/__tests__/security.test.ts` | 47 cases: auth modes, role gate, unauthenticated push never reaching upstream, consent ids, rate limit, origin allowlist, body cap, health disclosure, cache invalidation |
 | Handler units | `src/lib/__tests__/server.test.ts` | fake `fetch`: auth, mapping, consent gate, retries, push guards |
 | Component | `src/lib/__tests__/push.test.tsx` | demo-mode disabled state, diff modal, confirm gate, undo, verbatim errors, audit log |
-| Server smoke | `scripts/check-server.mjs` | boots the real server in demo mode; asserts the consent gate and that no key is echoed |
+| Server smoke | `scripts/check-server.mjs` | boots the real server in demo mode; auth, consent, origin, size limits, no key echoed |
+| Production guards | `scripts/check-prod-guards.mjs` | refuses to start with dev auth in production, no `AUTH_MODE`, no `CONSENT_SECRET`, or an unknown mode |
 | End-to-end | `scripts/e2e-push.mjs` | real HTTP server against a **stub** of api.ads.openai.com: live health, minor-unit mapping, push → previous set, local guard rails, undo, 403 pass-through, no key leakage |
 
 All four run in `npm run verify`. `ADS_API_BASE` / `EVENTS_API_BASE` exist only for

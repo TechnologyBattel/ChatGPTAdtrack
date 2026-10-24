@@ -42,7 +42,14 @@ describe('health', () => {
 
   it('verifies the key against /ad_account', async () => {
     const fetchImpl = vi.fn(async () =>
-      ok({ id: 'adacct_1', name: 'Acme', status: 'active', currency_code: 'INR', timezone: 'Asia/Kolkata', review: { status: 'approved' } }),
+      ok({
+        id: 'adacct_1',
+        name: 'Acme',
+        status: 'active',
+        currency_code: 'INR',
+        timezone: 'Asia/Kolkata',
+        review: { status: 'approved' },
+      }),
     );
     const r = await health({ ...baseEnv, fetchImpl });
     expect(r.mode).toBe('live');
@@ -171,9 +178,7 @@ describe('insights -> dataset', () => {
 describe('push hint set', () => {
   it('reads the previous set so a rollback is possible', async () => {
     const fetchImpl = vi.fn(async (input: RequestInfo | URL) =>
-      String(input).includes('/ad_groups/adgrp_1')
-        ? ok({ id: 'adgrp_1', context_hints: ['old hint one'] })
-        : ok({}),
+      String(input).includes('/ad_groups/adgrp_1') ? ok({ id: 'adgrp_1', context_hints: ['old hint one'] }) : ok({}),
     );
     const r = await pushHintSet('adgrp_1', ['a business owner asking about gst filing'], { ...baseEnv, fetchImpl });
     expect(r.previousHints).toEqual(['old hint one']);

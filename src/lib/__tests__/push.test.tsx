@@ -86,16 +86,12 @@ describe('demo mode', () => {
   });
 
   it('is also disabled without a target ad group or when nothing would change', () => {
-    const { unmount } = render(
-      <PushHints adGroup={null} candidateHints={proposed} live store={createMemoryStore()} />,
-    );
+    const { unmount } = render(<PushHints adGroup={null} candidateHints={proposed} live store={createMemoryStore()} />);
     expect((screen.getByRole('button', { name: 'Push to ad group' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/Choose a target ad group/i)).toBeTruthy();
     unmount();
 
-    render(
-      <PushHints adGroup={adGroup} candidateHints={[...adGroup.hints]} live store={createMemoryStore()} />,
-    );
+    render(<PushHints adGroup={adGroup} candidateHints={[...adGroup.hints]} live store={createMemoryStore()} />);
     expect((screen.getByRole('button', { name: 'Push to ad group' }) as HTMLButtonElement).disabled).toBe(true);
     expect(screen.getByText(/already identical/i)).toBeTruthy();
   });
@@ -137,7 +133,12 @@ describe('diff modal', () => {
 
 describe('confirm gate', () => {
   it('does not call the API until the confirm button is pressed', () => {
-    pushHints.mockResolvedValue({ adGroupId: adGroup.id, previousHints: adGroup.hints, pushedHints: proposed, versionedAt: 'now' });
+    pushHints.mockResolvedValue({
+      adGroupId: adGroup.id,
+      previousHints: adGroup.hints,
+      pushedHints: proposed,
+      versionedAt: 'now',
+    });
     renderPush();
     fireEvent.click(screen.getByRole('button', { name: 'Push to ad group' }));
     expect(pushHints).not.toHaveBeenCalled();
@@ -147,7 +148,12 @@ describe('confirm gate', () => {
   });
 
   it('logs the push with before and after sets', async () => {
-    pushHints.mockResolvedValue({ adGroupId: adGroup.id, previousHints: adGroup.hints, pushedHints: proposed, versionedAt: '2026-10-24T10:00:00.000Z' });
+    pushHints.mockResolvedValue({
+      adGroupId: adGroup.id,
+      previousHints: adGroup.hints,
+      pushedHints: proposed,
+      versionedAt: '2026-10-24T10:00:00.000Z',
+    });
     const { onAudit, onPushed } = renderPush();
     fireEvent.click(screen.getByRole('button', { name: 'Push to ad group' }));
     fireEvent.click(screen.getByRole('button', { name: 'Push 2 hints' }));
@@ -204,7 +210,12 @@ describe('undo', () => {
 
   it('surfaces an undo failure and keeps the undo button available', async () => {
     pushHints
-      .mockResolvedValueOnce({ adGroupId: adGroup.id, previousHints: adGroup.hints, pushedHints: proposed, versionedAt: 'now' })
+      .mockResolvedValueOnce({
+        adGroupId: adGroup.id,
+        previousHints: adGroup.hints,
+        pushedHints: proposed,
+        versionedAt: 'now',
+      })
       .mockRejectedValueOnce(new Error('Ads API 500: ad group is locked by another edit'));
 
     renderPush();
@@ -272,7 +283,14 @@ describe('research panel wiring', () => {
   }
 
   it('shows the disabled push control in demo mode', () => {
-    render(<Research initialSeeds="gst filing\ninvoice automation for accountants" live={false} adGroups={groups} auditStore={createMemoryStore()} />);
+    render(
+      <Research
+        initialSeeds="gst filing\ninvoice automation for accountants"
+        live={false}
+        adGroups={groups}
+        auditStore={createMemoryStore()}
+      />,
+    );
     runCluster();
     const button = screen.getByRole('button', { name: 'Push to ad group' }) as HTMLButtonElement;
     expect(button.disabled).toBe(true);
@@ -287,7 +305,14 @@ describe('research panel wiring', () => {
       versionedAt: '2026-10-24T10:00:00.000Z',
     });
     const store = createMemoryStore();
-    render(<Research initialSeeds="gst filing\ninvoice automation for accountants" live adGroups={groups} auditStore={store} />);
+    render(
+      <Research
+        initialSeeds="gst filing\ninvoice automation for accountants"
+        live
+        adGroups={groups}
+        auditStore={store}
+      />,
+    );
     runCluster();
 
     // Target selector is populated from the live ad-group list.

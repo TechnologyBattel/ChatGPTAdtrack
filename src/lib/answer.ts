@@ -89,7 +89,11 @@ function maskFirstParty(spec: AnswerSpec): AnswerSpec {
       };
     }
     if (section.kind === 'chart' && ['leads', 'customers', 'revenue'].includes(section.metric)) {
-      return { kind: 'text' as const, title: section.title, body: 'This series comes from first-party events, which are not connected yet. Advertiser API delivery metrics are shown elsewhere on this answer.' };
+      return {
+        kind: 'text' as const,
+        title: section.title,
+        body: 'This series comes from first-party events, which are not connected yet. Advertiser API delivery metrics are shown elsewhere on this answer.',
+      };
     }
     if (section.kind === 'bars') {
       return section;
@@ -163,7 +167,9 @@ function buildAnswer(q: string, dataset: Dataset, settings: Settings): AnswerSpe
   }
 
   // ------------------------------------------------------------ tracking health
-  if (has('tracking', 'pixel', 'conversion', 'conversions', 'attribution', 'native', 'internal', 'dedupe', 'measurement')) {
+  if (
+    has('tracking', 'pixel', 'conversion', 'conversions', 'attribution', 'native', 'internal', 'dedupe', 'measurement')
+  ) {
     const gap = m.conversionsNative - m.conversionsInternal;
     const gapPct = m.conversionsNative ? gap / m.conversionsNative : 0;
     return {
@@ -237,7 +243,12 @@ function buildAnswer(q: string, dataset: Dataset, settings: Settings): AnswerSpe
           })),
           note: 'Aggregated to country/region/city only.',
         },
-        { kind: 'table', title: 'Country performance', columns: ['Country', 'Spend', 'Leads', 'CPL', 'CAC', 'ROAS'], rows: countryRows(countries, settings) },
+        {
+          kind: 'table',
+          title: 'Country performance',
+          columns: ['Country', 'Spend', 'Leads', 'CPL', 'CAC', 'ROAS'],
+          rows: countryRows(countries, settings),
+        },
         { kind: 'chart', title: 'Leads per day', metric: 'leads', note: 'Last two days are provisional.' },
       ],
       sources: ['OpenAI Ads — Insights (country breakdown)', 'First-party lead events'],
@@ -254,7 +265,8 @@ function buildAnswer(q: string, dataset: Dataset, settings: Settings): AnswerSpe
     return {
       intent: 'device',
       headline: `${top?.label ?? 'Mobile'} takes ${formatPercent(top ? top.spendMinor / total : 0)} of spend and ${formatPercent(top ? top.leads / m.leads : 0)} of leads.`,
-      subline: 'Platform groups are ios_app, android_app and web. A phone in a browser counts as web, not as the iOS app.',
+      subline:
+        'Platform groups are ios_app, android_app and web. A phone in a browser counts as web, not as the iOS app.',
       tiles: [
         tile('Top device', top?.label ?? '—'),
         tile('Leads', formatNumber(m.leads)),
@@ -321,7 +333,11 @@ function buildAnswer(q: string, dataset: Dataset, settings: Settings): AnswerSpe
         { kind: 'chart', title: 'Leads per day', metric: 'leads' },
       ],
       sources: ['OpenAI Ads — Insights (ad group level)', 'First-party leads'],
-      followUps: ['Why is the most expensive ad group expensive?', 'How is my pacing?', 'Where are my leads coming from?'],
+      followUps: [
+        'Why is the most expensive ad group expensive?',
+        'How is my pacing?',
+        'Where are my leads coming from?',
+      ],
       windowDays,
     };
   }
@@ -336,7 +352,10 @@ function buildAnswer(q: string, dataset: Dataset, settings: Settings): AnswerSpe
       headline: campaigns.length
         ? `${campaigns.length} campaigns spent ${money(m.spendMinor)} and returned ${formatNumber(m.leads)} leads at ${money(m.cplMinor)} each.`
         : 'No campaign spend in this window.',
-      subline: best && worst ? `${best.label} has the cheapest CPL at ${money(best.cplMinor)}; ${worst.label} is the most expensive at ${money(worst.cplMinor)}.` : '',
+      subline:
+        best && worst
+          ? `${best.label} has the cheapest CPL at ${money(best.cplMinor)}; ${worst.label} is the most expensive at ${money(worst.cplMinor)}.`
+          : '',
       tiles: [
         tile('Spend', money(m.spendMinor)),
         tile('Leads', formatNumber(m.leads), { sub: `${money(m.cplMinor)} each` }),
@@ -392,7 +411,12 @@ function buildAnswer(q: string, dataset: Dataset, settings: Settings): AnswerSpe
         }),
       ],
       sections: [
-        { kind: 'chart', title: 'Spend per day', metric: 'spend', note: 'Budget is an average over 7 days; dips and spikes are normal.' },
+        {
+          kind: 'chart',
+          title: 'Spend per day',
+          metric: 'spend',
+          note: 'Budget is an average over 7 days; dips and spikes are normal.',
+        },
         {
           kind: 'text',
           title: 'What the average actually means',
@@ -412,7 +436,9 @@ function buildAnswer(q: string, dataset: Dataset, settings: Settings): AnswerSpe
 
   // ------------------------------------------------------------------ leads
   if (has('lead', 'leads', 'cpl', 'form', 'signup', 'signups', 'enquir', 'inquir')) {
-    const groups = byAdGroup(dataset, filter).filter((g) => g.leads > 0).sort((a, b) => a.cplMinor - b.cplMinor);
+    const groups = byAdGroup(dataset, filter)
+      .filter((g) => g.leads > 0)
+      .sort((a, b) => a.cplMinor - b.cplMinor);
     const d = delta(m.cplMinor, prev.cplMinor);
     return {
       intent: 'leads',
@@ -422,7 +448,10 @@ function buildAnswer(q: string, dataset: Dataset, settings: Settings): AnswerSpe
         : 'No previous period to compare yet.',
       tiles: [
         tile('Leads', formatNumber(m.leads), { delta: delta(m.leads, prev.leads) }),
-        tile('Cost per lead', money(m.cplMinor), { delta: Number.isFinite(d) ? -d : undefined, tone: d > 0 ? 'warn' : 'good' }),
+        tile('Cost per lead', money(m.cplMinor), {
+          delta: Number.isFinite(d) ? -d : undefined,
+          tone: d > 0 ? 'warn' : 'good',
+        }),
         tile('Lead → customer', formatPercent(m.leadToCustomer), { sub: `${formatNumber(m.customers)} customers` }),
         tile('Spend', money(m.spendMinor), { sub: `${formatPercent(m.ctr, 2)} CTR` }),
       ],
@@ -526,7 +555,19 @@ function buildAnswer(q: string, dataset: Dataset, settings: Settings): AnswerSpe
   }
 
   // --------------------------------------------------------- spend / default
-  const spendIntent = has('spend', 'spent', 'cost', 'costs', 'expensive', 'cpc', 'cpm', 'impression', 'impressions', 'click', 'clicks');
+  const spendIntent = has(
+    'spend',
+    'spent',
+    'cost',
+    'costs',
+    'expensive',
+    'cpc',
+    'cpm',
+    'impression',
+    'impressions',
+    'click',
+    'clicks',
+  );
   const dSpend = delta(m.spendMinor, prev.spendMinor);
   const topGroup = byAdGroup(dataset, filter)[0];
 
@@ -545,7 +586,12 @@ function buildAnswer(q: string, dataset: Dataset, settings: Settings): AnswerSpe
         }),
       ],
       sections: [
-        { kind: 'chart', title: 'Spend per day', metric: 'spend', note: 'Last two days are provisional while reporting settles.' },
+        {
+          kind: 'chart',
+          title: 'Spend per day',
+          metric: 'spend',
+          note: 'Last two days are provisional while reporting settles.',
+        },
         {
           kind: 'table',
           title: 'Spend by campaign',
@@ -559,12 +605,16 @@ function buildAnswer(q: string, dataset: Dataset, settings: Settings): AnswerSpe
             formatPercent(c.ctr, 2),
           ]),
         },
-        { kind: 'kpis', title: 'Efficiency', tiles: [
-          tile('CPC', money(m.cpcMinor)),
-          tile('CPM', money(m.cpmMinor)),
-          tile('CPL', money(m.cplMinor)),
-          tile('CAC', money(m.cacMinor)),
-        ] },
+        {
+          kind: 'kpis',
+          title: 'Efficiency',
+          tiles: [
+            tile('CPC', money(m.cpcMinor)),
+            tile('CPM', money(m.cpmMinor)),
+            tile('CPL', money(m.cplMinor)),
+            tile('CAC', money(m.cacMinor)),
+          ],
+        },
       ],
       sources: ['OpenAI Ads — Insights API (delivery and cost)', 'docs/METRICS.md'],
       followUps: ['How is my pacing?', 'How many leads did I get?', 'Where are my leads coming from?'],
@@ -584,41 +634,65 @@ function buildAnswer(q: string, dataset: Dataset, settings: Settings): AnswerSpe
       tile('Revenue', money(m.salesMinor), { sub: `${formatRatio(m.roas)} ROAS` }),
     ],
     sections: [
-      { kind: 'chart', title: 'Spend per day', metric: 'spend', note: topGroup ? `Largest ad group: ${topGroup.label}.` : undefined },
-      { kind: 'bars', title: 'Where the money goes', bars: byCampaign(dataset, filter).slice(0, 5).map((c) => ({
-        label: c.label,
-        display: formatMoney(c.spendMinor, settings.currency),
-        share: c.spendMinor / (m.spendMinor || 1),
-      })) },
-      { kind: 'kpis', title: 'The funnel, in one line', tiles: [
-        tile('Cost per lead', money(m.cplMinor)),
-        tile('Lead → customer', formatPercent(m.leadToCustomer)),
-        tile('Cost per customer', money(m.cacMinor)),
-        tile('ROAS', formatRatio(m.roas)),
-      ] },
+      {
+        kind: 'chart',
+        title: 'Spend per day',
+        metric: 'spend',
+        note: topGroup ? `Largest ad group: ${topGroup.label}.` : undefined,
+      },
+      {
+        kind: 'bars',
+        title: 'Where the money goes',
+        bars: byCampaign(dataset, filter)
+          .slice(0, 5)
+          .map((c) => ({
+            label: c.label,
+            display: formatMoney(c.spendMinor, settings.currency),
+            share: c.spendMinor / (m.spendMinor || 1),
+          })),
+      },
+      {
+        kind: 'kpis',
+        title: 'The funnel, in one line',
+        tiles: [
+          tile('Cost per lead', money(m.cplMinor)),
+          tile('Lead → customer', formatPercent(m.leadToCustomer)),
+          tile('Cost per customer', money(m.cacMinor)),
+          tile('ROAS', formatRatio(m.roas)),
+        ],
+      },
     ],
     sources: ['OpenAI Ads — Insights API', 'First-party lead and order events'],
-    followUps: ['How much did I spend this month?', 'Where are my leads coming from?', 'What is my ROAS?', 'Which ad group has the best cost per lead?'],
+    followUps: [
+      'How much did I spend this month?',
+      'Where are my leads coming from?',
+      'What is my ROAS?',
+      'Which ad group has the best cost per lead?',
+    ],
     windowDays,
   };
 }
 
 function cheapest(groups: GroupedMetrics[]): GroupedMetrics {
   const withLeads = groups.filter((g) => g.leads > 0);
-  return [...(withLeads.length ? withLeads : groups)].sort((a, b) => a.cplMinor - b.cplMinor)[0] ?? {
-    ...emptyMetrics(),
-    key: '—',
-    label: '—',
-  };
+  return (
+    [...(withLeads.length ? withLeads : groups)].sort((a, b) => a.cplMinor - b.cplMinor)[0] ?? {
+      ...emptyMetrics(),
+      key: '—',
+      label: '—',
+    }
+  );
 }
 
 function bestCac(groups: GroupedMetrics[]): GroupedMetrics {
   const withCustomers = groups.filter((g) => g.customers > 0);
-  return [...(withCustomers.length ? withCustomers : groups)].sort((a, b) => a.cacMinor - b.cacMinor)[0] ?? {
-    ...emptyMetrics(),
-    key: '—',
-    label: '—',
-  };
+  return (
+    [...(withCustomers.length ? withCustomers : groups)].sort((a, b) => a.cacMinor - b.cacMinor)[0] ?? {
+      ...emptyMetrics(),
+      key: '—',
+      label: '—',
+    }
+  );
 }
 
 function countryRows(groups: GroupedMetrics[], settings: Settings): string[][] {

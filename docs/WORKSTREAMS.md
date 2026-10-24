@@ -36,6 +36,17 @@ Because this stream crosses the browser boundary, it owns the rule that no key
 may appear in a `VITE_` variable, and it ships a test asserting no key material is
 echoed in any response.
 
+## Stream H — hardening (added before any new feature work)
+
+| Files | Deliverable |
+|---|---|
+| `server/auth.mjs`, `server/consent.mjs`, `server/limits.mjs`, `server/app.mjs`, `server/server.mjs`, `server/errors.mjs` | Auth gate (dev + Firebase, pluggable), role gate on writes, HMAC consent ids, per-IP rate limiting, origin allowlist, body cap, production start-up guards |
+| `Dockerfile`, `.dockerignore`, `.github/workflows/ci.yml`, `eslint.config.js`, `.prettierrc.json`, `.editorconfig`, `.nvmrc` | Non-root container with healthcheck, CI running the full gate, lint/format tooling, declared Node engine |
+| `scripts/check-server.mjs`, `scripts/check-prod-guards.mjs`, `scripts/e2e-push.mjs` | The rules verified by running the real server, not by reading the code |
+
+The key move here was separating **routing** (`app.mjs`, no transport) from **serving**
+(`server.mjs`, node:http). Every security rule is now a sub-millisecond unit test.
+
 ## Interface contracts (frozen)
 
 ```ts

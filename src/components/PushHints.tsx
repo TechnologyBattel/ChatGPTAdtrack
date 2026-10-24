@@ -1,13 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { pushHints } from '../lib/api';
-import {
-  appendAudit,
-  createLocalStore,
-  describeDiff,
-  diffHints,
-  type AuditEntry,
-  type AuditStore,
-} from '../lib/hints';
+import { appendAudit, createLocalStore, describeDiff, diffHints, type AuditEntry, type AuditStore } from '../lib/hints';
 
 export interface TargetAdGroup {
   id: string;
@@ -38,15 +31,7 @@ function errorMessage(error: unknown): string {
   return String(error);
 }
 
-export default function PushHints({
-  adGroup,
-  candidateHints,
-  live,
-  disabledReason,
-  store,
-  onAudit,
-  onPushed,
-}: Props) {
+export default function PushHints({ adGroup, candidateHints, live, disabledReason, store, onAudit, onPushed }: Props) {
   const auditStore = useMemo(() => store ?? createLocalStore(), [store]);
   const [open, setOpen] = useState(false);
   const [state, setState] = useState<SaveState>({ kind: 'idle' });
@@ -57,7 +42,7 @@ export default function PushHints({
   const diff = useMemo(() => diffHints(adGroup?.hints ?? [], candidateHints), [adGroup?.hints, candidateHints]);
 
   const blockedReason = !live
-    ? disabledReason ?? 'The server has no Advertiser API key, so hint sets cannot be pushed.'
+    ? (disabledReason ?? 'The server has no Advertiser API key, so hint sets cannot be pushed.')
     : !adGroup
       ? 'Choose a target ad group first.'
       : candidateHints.length === 0
@@ -229,9 +214,7 @@ export default function PushHints({
 
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <section aria-label="Current hints">
-                  <h3 className="mb-1 text-[12px] font-medium text-ink">
-                    Current ({adGroup.hints.length})
-                  </h3>
+                  <h3 className="mb-1 text-[12px] font-medium text-ink">Current ({adGroup.hints.length})</h3>
                   <ul className="space-y-1">
                     {adGroup.hints.length === 0 && <li className="text-[12px] text-muted">No hints set.</li>}
                     {adGroup.hints.map((hint) => {
@@ -251,9 +234,7 @@ export default function PushHints({
                 </section>
 
                 <section aria-label="Proposed hints">
-                  <h3 className="mb-1 text-[12px] font-medium text-ink">
-                    Proposed ({candidateHints.length})
-                  </h3>
+                  <h3 className="mb-1 text-[12px] font-medium text-ink">Proposed ({candidateHints.length})</h3>
                   <ul className="space-y-1">
                     {candidateHints.map((hint) => {
                       const adding = diff.added.includes(hint);
@@ -273,12 +254,18 @@ export default function PushHints({
               </div>
 
               {state.kind === 'error' && (
-                <p role="alert" className="mt-3 rounded-md border border-[#f6aea9] bg-[#fce8e6] px-2.5 py-1.5 text-[12px] leading-5 text-[#a50e0e]">
+                <p
+                  role="alert"
+                  className="mt-3 rounded-md border border-[#f6aea9] bg-[#fce8e6] px-2.5 py-1.5 text-[12px] leading-5 text-[#a50e0e]"
+                >
                   {state.message}
                 </p>
               )}
               {state.kind === 'done' && (
-                <p role="status" className="mt-3 rounded-md border border-[#ceead6] bg-[#e6f4ea] px-2.5 py-1.5 text-[12px] leading-5 text-good">
+                <p
+                  role="status"
+                  className="mt-3 rounded-md border border-[#ceead6] bg-[#e6f4ea] px-2.5 py-1.5 text-[12px] leading-5 text-good"
+                >
                   Pushed {state.pushed.length} hints. Undo is available while this page is open.
                 </p>
               )}

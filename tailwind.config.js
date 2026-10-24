@@ -22,7 +22,10 @@ export default {
         card: '0 1px 2px rgba(60,64,67,.08), 0 1px 3px 1px rgba(60,64,67,.06)',
       },
       keyframes: {
-        rise: { '0%': { opacity: '0', transform: 'translateY(8px)' }, '100%': { opacity: '1', transform: 'translateY(0)' } },
+        rise: {
+          '0%': { opacity: '0', transform: 'translateY(8px)' },
+          '100%': { opacity: '1', transform: 'translateY(0)' },
+        },
       },
       animation: { rise: 'rise .28s ease-out both' },
     },

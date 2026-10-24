@@ -21,7 +21,11 @@ export default function SearchBar({ mode, onModeChange, onSubmit, compact, initi
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === '/' && document.activeElement?.tagName !== 'INPUT' && document.activeElement?.tagName !== 'TEXTAREA') {
+      if (
+        e.key === '/' &&
+        document.activeElement?.tagName !== 'INPUT' &&
+        document.activeElement?.tagName !== 'TEXTAREA'
+      ) {
         e.preventDefault();
         inputRef.current?.focus();
       }
@@ -97,7 +101,8 @@ export default function SearchBar({ mode, onModeChange, onSubmit, compact, initi
       )}
       {!compact && (
         <p className="mt-4 text-center text-[12px] text-muted">
-          Press <kbd className="rounded border border-line bg-cloud px-1 font-mono text-[11px]">/</kbd> to focus · Demo data, no account connected
+          Press <kbd className="rounded border border-line bg-cloud px-1 font-mono text-[11px]">/</kbd> to focus · Demo
+          data, no account connected
         </p>
       )}
     </div>

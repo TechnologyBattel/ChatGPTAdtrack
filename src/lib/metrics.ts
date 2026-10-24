@@ -1,16 +1,7 @@
 // Stream B — metrics engine. Pure functions, no UI, no I/O.
 // Every number the page shows is computed here so it can be tested.
 
-import type {
-  DailyPoint,
-  Dataset,
-  DayRow,
-  Filter,
-  GroupedMetrics,
-  MetricSet,
-  Pacing,
-  Settings,
-} from './types';
+import type { DailyPoint, Dataset, DayRow, Filter, GroupedMetrics, MetricSet, Pacing, Settings } from './types';
 
 export const DEFAULT_SETTINGS: Settings = {
   currency: 'INR',
@@ -196,7 +187,12 @@ export function byCountry(dataset: Dataset, filter: Filter = {}): GroupedMetrics
     US: 'United States',
     GB: 'United Kingdom',
   };
-  return groupBy(dataset, filter, (r) => r.country, (k) => names[k] ?? k);
+  return groupBy(
+    dataset,
+    filter,
+    (r) => r.country,
+    (k) => names[k] ?? k,
+  );
 }
 
 export function byDevice(dataset: Dataset, filter: Filter = {}): GroupedMetrics[] {
@@ -204,9 +200,19 @@ export function byDevice(dataset: Dataset, filter: Filter = {}): GroupedMetrics[
   // only carry one segment. Those rows are excluded from every total.
   if (dataset.segments?.device?.length) {
     const scoped = { ...dataset, rows: dataset.segments.device };
-    return groupBy(scoped, filter, (r) => r.device, (k) => k[0].toUpperCase() + k.slice(1));
+    return groupBy(
+      scoped,
+      filter,
+      (r) => r.device,
+      (k) => k[0].toUpperCase() + k.slice(1),
+    );
   }
-  return groupBy(dataset, filter, (r) => r.device, (k) => k[0].toUpperCase() + k.slice(1));
+  return groupBy(
+    dataset,
+    filter,
+    (r) => r.device,
+    (k) => k[0].toUpperCase() + k.slice(1),
+  );
 }
 
 export function byAdGroup(dataset: Dataset, filter: Filter = {}): GroupedMetrics[] {

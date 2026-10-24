@@ -18,3 +18,9 @@
 - 2026-10-24: A hint push is two steps: an explicit diff (current vs proposed, with counts) then a confirm. No silent overwrites — the ad group's hints are replaced wholesale by the API, and OpenAI keeps no history.
 - 2026-10-24: The rollback copy is the `previousHints` returned by our server, held in a local audit log. It survives reload, not a cleared browser profile; a server-side copy is a Slice 5 item.
 - 2026-10-24: Failed pushes and failed undos are audited too. An audit trail that records only successes hides the incidents you need later.
+- 2026-10-24: Auth is a server concern only. `AUTH_MODE=dev` uses a shared token and is refused under `NODE_ENV=production`; production must set `AUTH_MODE=firebase`. An unknown mode fails startup.
+- 2026-10-24: Writes require `admin` or `owner`. `analyst` and `viewer` can read everything and change nothing. The check happens before any upstream call.
+- 2026-10-24: A boolean is not consent. `/api/track` requires an HMAC-signed consent id (scoped, expiring) issued by `/api/consent`; verification is stateless so the demo needs no database.
+- 2026-10-24: `/api/health` is public but shallow (`{ok, mode}`). Key presence, account identity and upstream error text require a token.
+- 2026-10-24: The one public write path (`/api/track`) carries the most guards: consent id, origin allowlist, per-IP rate limit, body cap. Rate limiting is in-memory and therefore per instance; a shared store is a production follow-up.
+- 2026-10-24: Routing lives in `server/app.mjs` with no transport, so every rule is unit-testable without a socket.

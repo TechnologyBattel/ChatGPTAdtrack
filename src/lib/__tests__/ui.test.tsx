@@ -65,8 +65,10 @@ describe('single page shell', () => {
     // The health probe is async: wait for it to settle into demo mode.
     const bar = await screen.findByRole('button', { name: /Demo data/i });
     fireEvent.click(bar);
-    expect(screen.getByText(/never sent to this browser/i)).toBeTruthy();
-    expect(screen.getByText(/Advertiser key:/i)).toBeTruthy();
+    // In the test environment there is no API server, so health is signed out and
+    // the panel must say so rather than inventing key details.
+    expect(screen.getByText(/Signed out/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: /Retry connection/i })).toBeTruthy();
   });
 
   it('exports an answer: link, print and CSV are all offered', () => {
@@ -81,7 +83,9 @@ describe('single page shell', () => {
   it('offers follow-up questions that are answerable', () => {
     render(<App />);
     askQuestion('What is my ROAS?');
-    const followUps = screen.getAllByRole('button').filter((b) => /CAC|lead|spend|campaign|Research context/i.test(b.textContent ?? ''));
+    const followUps = screen
+      .getAllByRole('button')
+      .filter((b) => /CAC|lead|spend|campaign|Research context/i.test(b.textContent ?? ''));
     expect(followUps.length).toBeGreaterThan(2);
     fireEvent.click(followUps[0]);
     expect(screen.getByRole('heading', { level: 1 })).toBeTruthy();

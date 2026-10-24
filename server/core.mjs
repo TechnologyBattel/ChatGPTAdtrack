@@ -2,11 +2,14 @@
 // Nothing here reads process.env directly; the caller passes an env object.
 // Keys NEVER reach the browser: this module only ever runs on the server.
 
+import { ApiError } from './errors.mjs';
+
+export { ApiError };
+
 // Overridable so an end-to-end test can point the same code at a stub.
 // Production always uses the real hosts.
 const DEFAULT_ADS_BASE = 'https://api.ads.openai.com/v1';
 const DEFAULT_EVENTS_BASE = 'https://bzr.openai.com/v1/events';
-
 
 export const SUPPORTED_EVENTS = new Set([
   'page_viewed',
@@ -39,14 +42,6 @@ export const EVENT_DATA_TYPE = {
   custom: 'custom',
 };
 
-export class ApiError extends Error {
-  constructor(status, code, message) {
-    super(message);
-    this.status = status;
-    this.code = code;
-  }
-}
-
 function redact(value) {
   if (!value) return undefined;
   return value.length <= 6 ? '••••' : `${value.slice(0, 3)}…${value.slice(-2)}`;
@@ -65,7 +60,11 @@ export function configuration(env) {
 function requireKey(env, which) {
   const key = which === 'ads' ? env.adsKey : env.capiKey;
   if (!key) {
-    throw new ApiError(503, `missing_${which}_key`, `No ${which === 'ads' ? 'Advertiser' : 'Conversions'} API key configured on the server.`);
+    throw new ApiError(
+      503,
+      `missing_${which}_key`,
+      `No ${which === 'ads' ? 'Advertiser' : 'Conversions'} API key configured on the server.`,
+    );
   }
   return key;
 }
@@ -93,7 +92,11 @@ async function request(url, init, env, attempts = 3) {
 
 async function adsGet(path, env) {
   const key = requireKey(env, 'ads');
-  const res = await request(`${env.adsBase ?? DEFAULT_ADS_BASE}${path}`, { headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' } }, env);
+  const res = await request(
+    `${env.adsBase ?? DEFAULT_ADS_BASE}${path}`,
+    { headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' } },
+    env,
+  );
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(res.status, 'ads_error', body.error?.message ?? `Ads API ${res.status}`);
   return body;
@@ -237,7 +240,12 @@ export function mapInsightsToDataset(payload, opts = {}) {
   const campaignIds = [...new Set(rows.map((r) => r.campaignId))];
   return {
     generatedAt: new Date().toISOString(),
-    endDate: rows.length ? rows.map((r) => r.date).sort().at(-1) : isoDate(new Date()),
+    endDate: rows.length
+      ? rows
+          .map((r) => r.date)
+          .sort()
+          .at(-1)
+      : isoDate(new Date()),
     currency: payload.currency,
     timezone: payload.timezone,
     firstPartyAvailable: Boolean(opts.firstPartyAvailable),
@@ -258,7 +266,12 @@ export function mapInsightsToDataset(payload, opts = {}) {
 export async function health(env) {
   const config = configuration(env);
   if (!config.live) {
-    return { ok: false, mode: 'demo', configuration: config, reason: 'No Advertiser API key and Pixel ID on the server.' };
+    return {
+      ok: false,
+      mode: 'demo',
+      configuration: config,
+      reason: 'No Advertiser API key and Pixel ID on the server.',
+    };
   }
   try {
     const account = await fetchAccount(env);
@@ -277,7 +290,8 @@ export async function health(env) {
 export async function track(input, env) {
   if (!input.consent) throw new ApiError(403, 'consent_required', 'No measurement consent on record; event dropped.');
   if (!input.eventId) throw new ApiError(400, 'missing_event_id', 'event_id is required for deduplication.');
-  if (!SUPPORTED_EVENTS.has(input.eventName)) throw new ApiError(400, 'unsupported_event', `Unsupported event: ${input.eventName}`);
+  if (!SUPPORTED_EVENTS.has(input.eventName))
+    throw new ApiError(400, 'unsupported_event', `Unsupported event: ${input.eventName}`);
 
   const payload = {
     id: input.eventId,
@@ -331,10 +345,13 @@ export async function track(input, env) {
  * offer a one-click rollback.
  */
 export async function pushHintSet(adGroupId, hints, env) {
-  if (!Array.isArray(hints) || hints.length === 0) throw new ApiError(400, 'empty_hints', 'Refusing to push an empty hint set.');
-  if (hints.length > 2000) throw new ApiError(400, 'too_many_hints', 'The API caps context hints at 2,000 per ad group.');
+  if (!Array.isArray(hints) || hints.length === 0)
+    throw new ApiError(400, 'empty_hints', 'Refusing to push an empty hint set.');
+  if (hints.length > 2000)
+    throw new ApiError(400, 'too_many_hints', 'The API caps context hints at 2,000 per ad group.');
   for (const h of hints) {
-    if (typeof h !== 'string' || !h.trim()) throw new ApiError(400, 'bad_hint', 'Every hint must be a non-empty string.');
+    if (typeof h !== 'string' || !h.trim())
+      throw new ApiError(400, 'bad_hint', 'Every hint must be a non-empty string.');
     if (/[\w.+-]+@[\w-]+\.[\w.]+/.test(h)) throw new ApiError(400, 'pii_in_hint', 'A hint contains an email address.');
   }
 

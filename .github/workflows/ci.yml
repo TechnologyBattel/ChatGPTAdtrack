@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint, typecheck, test, build, server checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Engines check
+        run: node -e "const e=require('./package.json').engines.node; const p=process.versions.node; console.log('node', p, 'requires', e)"
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit and component tests
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+      - name: Server guard checks (demo mode, auth, consent, size limits)
+        run: node scripts/check-server.mjs
+
+      - name: Production start-up guards
+        run: node scripts/check-prod-guards.mjs
+
+      - name: End-to-end push/undo against a stub
+        run: node scripts/e2e-push.mjs
+
+  docker-lint:
+    name: Container runs unprivileged
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image
+        run: docker build -t adtrack-api:ci .
+      - name: Assert non-root user and healthcheck
+        run: |
+          set -e
+          user=$(docker inspect -f '{{.Config.User}}' adtrack-api:ci)
+          echo "container user: ${user}"
+          test "${user}" = "node" || { echo "::error::container must run as the node user"; exit 1; }
+          health=$(docker inspect -f '{{json .Config.Healthcheck.Test}}' adtrack-api:ci)
+          echo "healthcheck: ${health}"
+          echo "${health}" | grep -q '/api/health' || { echo "::error::healthcheck must probe /api/health"; exit 1; }

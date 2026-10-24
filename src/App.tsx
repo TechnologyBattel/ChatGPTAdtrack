@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { answerFor, SUGGESTIONS } from './lib/answer';
 import { DEFAULT_SETTINGS, formatMoney, formatRatio, metricsOf } from './lib/metrics';
 import { buildDataset } from './lib/demo';
-import { getDataset, getHealth, type Health } from './lib/api';
+import { bootstrapDevSession, getDataset, getHealth, type Health } from './lib/api';
 import type { Dataset } from './lib/types';
 import SearchBar, { type Mode } from './components/SearchBar';
 import Answer from './components/Answer';
@@ -27,9 +27,12 @@ export default function App() {
   const connect = useCallback(async () => {
     setLoading(true);
     try {
+      // Development mints a token so the preview stays usable; in production this
+      // route does not exist and the app runs signed-out until auth is wired in.
+      await bootstrapDevSession();
       const h = await getHealth();
       setHealth(h);
-      if (h.mode === 'live') {
+      if (h.mode === 'live' && h.authenticated) {
         const res = await getDataset(90);
         if (res.mode === 'live' && res.dataset?.rows?.length) {
           setDataset({ ...res.dataset, firstPartyAvailable: res.dataset.firstPartyAvailable ?? false });
@@ -42,12 +45,7 @@ export default function App() {
         setSource('demo');
       }
     } catch {
-      setHealth({
-        ok: false,
-        mode: 'demo',
-        reason: 'API server not running; using demo data.',
-        configuration: { adsKey: false, capiKey: false, pixelId: false, live: false },
-      });
+      setHealth({ ok: false, mode: 'demo', authenticated: false });
       setSource('demo');
     } finally {
       setLoading(false);
@@ -120,13 +118,22 @@ export default function App() {
                 Ask your ChatGPT ads one question. Get one answer: spend → leads → customers → revenue → where.
               </p>
             </div>
-            <SearchBar mode={mode} onModeChange={setMode} onSubmit={ask} compact={false} suggestions={SUGGESTIONS.slice(0, 4)} />
+            <SearchBar
+              mode={mode}
+              onModeChange={setMode}
+              onSubmit={ask}
+              compact={false}
+              suggestions={SUGGESTIONS.slice(0, 4)}
+            />
             <div className="mt-8">
               <ConnectionBar health={health} loading={loading} onRetry={connect} compact />
             </div>
             <div className="mx-auto mt-8 grid max-w-[620px] grid-cols-1 gap-2 sm:grid-cols-3">
               {[
-                { k: formatMoney(totals.spendMinor, 'INR', true), l: `spend · ${source === 'live' ? 'your account' : 'demo'}` },
+                {
+                  k: formatMoney(totals.spendMinor, 'INR', true),
+                  l: `spend · ${source === 'live' ? 'your account' : 'demo'}`,
+                },
                 { k: formatRatio(totals.roas), l: source === 'live' ? 'ROAS (needs first-party)' : 'blended ROAS' },
                 { k: `${dataset.adGroups.length}`, l: 'ad groups with hint sets' },
               ].map((s) => (
@@ -184,7 +191,9 @@ export default function App() {
             <ConnectionBar health={health} loading={loading} onRetry={connect} compact />
           </div>
           <p className="mb-3 text-[12px] text-muted print:hidden">
-            <span className="rounded-full bg-cloud px-2 py-0.5">{asked.mode === 'research' ? 'research' : spec?.intent}</span>
+            <span className="rounded-full bg-cloud px-2 py-0.5">
+              {asked.mode === 'research' ? 'research' : spec?.intent}
+            </span>
             {source === 'live' && <span className="ml-2 text-[#80868b]">live account data · cached 5 min</span>}
           </p>
           {asked.mode === 'research' || !spec ? (
@@ -192,7 +201,7 @@ export default function App() {
               initialSeeds={asked.q}
               compactDataset={dataset}
               onFollowUp={(q, m) => ask(q, m)}
-              live={source === 'live' && health?.mode === 'live'}
+              live={source === 'live' && health?.mode === 'live' && health?.authenticated === true}
               adGroups={dataset.adGroups.map((g) => ({ id: g.id, name: g.name, hints: g.hints }))}
             />
           ) : (
@@ -201,7 +210,7 @@ export default function App() {
               dataset={dataset}
               settings={settings}
               onFollowUp={ask}
-              live={source === 'live' && health?.mode === 'live'}
+              live={source === 'live' && health?.mode === 'live' && health?.authenticated === true}
             />
           )}
         </div>

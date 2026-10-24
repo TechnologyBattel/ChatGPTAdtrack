@@ -23,20 +23,43 @@ const stub = http.createServer(async (req, res) => {
   };
 
   if (req.method === 'GET' && req.url === '/v1/ad_account') {
-    return send(200, { id: 'adacct_stub', name: 'Stub Ads', status: 'active', currency_code: 'INR', timezone: 'Asia/Kolkata', review: { status: 'approved' } });
+    return send(200, {
+      id: 'adacct_stub',
+      name: 'Stub Ads',
+      status: 'active',
+      currency_code: 'INR',
+      timezone: 'Asia/Kolkata',
+      review: { status: 'approved' },
+    });
   }
   if (req.method === 'GET' && req.url.startsWith('/v1/campaigns')) {
     return send(200, {
       object: 'list',
       has_more: false,
-      data: [{ id: 'cmpn_stub', name: 'Intent — accounting', status: 'active', bidding_type: 'clicks', budget: { daily_spend_limit_micros: 2500000000 } }],
+      data: [
+        {
+          id: 'cmpn_stub',
+          name: 'Intent — accounting',
+          status: 'active',
+          bidding_type: 'clicks',
+          budget: { daily_spend_limit_micros: 2500000000 },
+        },
+      ],
     });
   }
   if (req.method === 'GET' && req.url.startsWith('/v1/ad_groups?')) {
-    return send(200, { object: 'list', data: [{ id: 'adgrp_stub', campaign_id: 'cmpn_stub', name: 'GST filing stress', context_hints: state.hints }] });
+    return send(200, {
+      object: 'list',
+      data: [{ id: 'adgrp_stub', campaign_id: 'cmpn_stub', name: 'GST filing stress', context_hints: state.hints }],
+    });
   }
   if (req.method === 'GET' && req.url === '/v1/ad_groups/adgrp_stub') {
-    return send(200, { id: 'adgrp_stub', campaign_id: 'cmpn_stub', name: 'GST filing stress', context_hints: state.hints });
+    return send(200, {
+      id: 'adgrp_stub',
+      campaign_id: 'cmpn_stub',
+      name: 'GST filing stress',
+      context_hints: state.hints,
+    });
   }
   if (req.method === 'POST' && req.url === '/v1/ad_groups/adgrp_stub') {
     const body = await new Promise((resolve) => {
@@ -79,16 +102,31 @@ function check(condition, message) {
   if (!condition) throw new Error(`FAIL: ${message}`);
 }
 
-const call = async (path, init) => {
+const call = async (path, init = {}) => {
+  const res = await fetch(`http://127.0.0.1:${API}${path}`, {
+    ...init,
+    headers: { Authorization: `Bearer ${TOKEN}`, ...(init.headers ?? {}) },
+  });
+  return { status: res.status, body: await res.json() };
+};
+
+const anon = async (path, init = {}) => {
   const res = await fetch(`http://127.0.0.1:${API}${path}`, init);
   return { status: res.status, body: await res.json() };
 };
 
 await new Promise((r) => stub.listen(STUB, '127.0.0.1', r));
 
-const api = spawn(process.execPath, ['server/dev.mjs'], {
+const TOKEN = 'e2e_dev_token_9876543210';
+const api = spawn(process.execPath, ['server/server.mjs'], {
   env: {
     ...process.env,
+    NODE_ENV: 'development',
+    AUTH_MODE: 'dev',
+    DEV_AUTH_TOKEN: TOKEN,
+    DEV_AUTH_ROLE: 'admin',
+    CONSENT_SECRET: 'e2e-consent-secret-0123456789',
+    TRACK_ORIGINS: 'http://127.0.0.1:5173',
     API_PORT: String(API),
     OPENAI_ADS_API_KEY: 'test_ads_key',
     OPENAI_CONVERSIONS_API_KEY: 'test_capi_key',
@@ -114,6 +152,12 @@ try {
     }
   }
   check(health?.mode === 'live', `expected live mode, got ${health?.mode}`);
+  const anonymous = await anon('/api/health');
+  check(
+    JSON.stringify(Object.keys(anonymous.body).sort()) === '["mode","ok"]',
+    'anonymous health must not include details',
+  );
+  console.log('ok  anonymous health exposes only {ok, mode}');
   check(health.account?.name === 'Stub Ads', 'account name should come from the API');
   console.log('ok  health reports live mode and the account');
 
@@ -124,6 +168,16 @@ try {
   console.log('ok  insights map to minor units and flag missing first-party data');
 
   const pushed = ['someone who is behind on GST filing', 'a business owner asking how to reconcile GSTR-2B'];
+
+  const before = state.writes;
+  const anonymousPush = await anon('/api/adgroups/adgrp_stub/hints', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ hints: pushed }),
+  });
+  check(anonymousPush.status === 401, `anonymous push must be 401, got ${anonymousPush.status}`);
+  check(state.writes === before, 'an unauthenticated push must never reach the upstream API');
+  console.log('ok  unauthenticated push is rejected before any upstream call');
   const push = await call('/api/adgroups/adgrp_stub/hints', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -136,7 +190,10 @@ try {
   console.log('ok  push writes once and returns the previous set');
 
   // Guard rails before the undo: empty and PII sets must be refused locally.
-  for (const [hints, code] of [[[], 'empty_hints'], [['mail me at a@b.com'], 'pii_in_hint']]) {
+  for (const [hints, code] of [
+    [[], 'empty_hints'],
+    [['mail me at a@b.com'], 'pii_in_hint'],
+  ]) {
     const res = await call('/api/adgroups/adgrp_stub/hints', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

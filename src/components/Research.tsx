@@ -67,7 +67,10 @@ export default function Research({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [granularity]);
 
-  const matching = useMemo(() => (compactDataset ? byAdGroup(compactDataset, { days: 30 }).slice(0, 4) : []), [compactDataset]);
+  const matching = useMemo(
+    () => (compactDataset ? byAdGroup(compactDataset, { days: 30 }).slice(0, 4) : []),
+    [compactDataset],
+  );
 
   const download = () => {
     if (!result) return;
@@ -80,8 +83,7 @@ export default function Research({
     URL.revokeObjectURL(url);
   };
 
-  const hintIssues = (c: Cluster) =>
-    result?.hints.filter((h) => h.clusterId === c.id) ?? [];
+  const hintIssues = (c: Cluster) => result?.hints.filter((h) => h.clusterId === c.id) ?? [];
 
   const selectedId = (clusterId: string) => targets[clusterId] ?? adGroups[0]?.id;
 
@@ -224,7 +226,10 @@ export default function Research({
                                   <div className="min-w-0">
                                     <p className="text-[12.5px] leading-5 text-ink">{h.text}</p>
                                     <p className="text-[11px] text-muted">
-                                      {h.issues.filter((i) => i.severity !== 'ok').map((i) => i.message).join(' ') || h.issues[0].message}
+                                      {h.issues
+                                        .filter((i) => i.severity !== 'ok')
+                                        .map((i) => i.message)
+                                        .join(' ') || h.issues[0].message}
                                     </p>
                                   </div>
                                   <button
@@ -248,7 +253,8 @@ export default function Research({
                                 <li key={g.key} className="flex justify-between text-[11px] text-muted">
                                   <span className="truncate">{g.label}</span>
                                   <span className="num shrink-0">
-                                    {formatMoney(g.cplMinor, 'INR')} CPL · {formatPercent(g.leadToCustomer)} · {formatRatio(g.roas)}
+                                    {formatMoney(g.cplMinor, 'INR')} CPL · {formatPercent(g.leadToCustomer)} ·{' '}
+                                    {formatRatio(g.roas)}
                                   </span>
                                 </li>
                               ))}
@@ -285,7 +291,9 @@ export default function Research({
                           <div className="flex flex-wrap items-center gap-2">
                             <button
                               type="button"
-                              onClick={() => onFollowUp?.(c.name.replace(/^[^:]+:\s*/, '') + ' ad group performance', 'track')}
+                              onClick={() =>
+                                onFollowUp?.(c.name.replace(/^[^:]+:\s*/, '') + ' ad group performance', 'track')
+                              }
                               className="rounded-full border border-line px-3 py-1 text-[11px] text-muted hover:bg-cloud"
                             >
                               Check this theme&apos;s performance
@@ -309,8 +317,8 @@ export default function Research({
 
             {result.gaps.length > 0 && (
               <p className="text-[12px] leading-5 text-muted">
-                <span className="font-medium text-ink">Coverage gaps:</span> {result.gaps.join('; ')} — thin clusters are
-                usually where a new ad group earns its budget.
+                <span className="font-medium text-ink">Coverage gaps:</span> {result.gaps.join('; ')} — thin clusters
+                are usually where a new ad group earns its budget.
               </p>
             )}
 
@@ -321,7 +329,10 @@ export default function Research({
                 </summary>
                 <ul className="divide-y divide-[#f1f3f4] border-t border-line">
                   {audit.map((entry) => (
-                    <li key={entry.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 px-3 py-1.5 text-[11px]">
+                    <li
+                      key={entry.id}
+                      className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 px-3 py-1.5 text-[11px]"
+                    >
                       <span className="num text-muted">
                         {new Date(entry.at).toLocaleString('en-IN', {
                           day: '2-digit',

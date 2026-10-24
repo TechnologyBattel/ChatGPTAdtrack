@@ -1,114 +1,111 @@
-# AdTrack (ChatGPTAdtrack)
+# AdTrack
 
 Ask one plain-language question about your ChatGPT ads and get one answer:
-**spend → leads → customers → revenue → where.** Plus a context-hint research
+spend → leads → customers → revenue → where. Plus a context-hint research
 workspace, because ChatGPT Ads has no keyword targeting.
 
 ## Status
 
-Working, tested single-page app with a real server-side Ads API integration.
-It runs on demo data until keys exist on the server, then switches to the live
-account — nothing in the browser ever holds a key.
+Working single-page app on a single Node API. It runs on **demo data** until keys
+exist on the server, then switches to the **live** account. Every route except
+`POST /api/track` and `GET /api/health` requires an auth token; production
+(`NODE_ENV=production`) refuses to start without `AUTH_MODE=firebase`.
+
+`npm run verify` is the gate: lint, format, typecheck, tests, build, and three
+run-it-for-real checks (server guards, production start-up guards, push/undo e2e).
+CI runs the same command on every push.
+
+## Run it
 
 ```bash
 npm install
-cp .env.example .env     # fill in the server keys you actually have
-npm run api              # API server, 0.0.0.0:8787
-npm run dev              # web app, 0.0.0.0:5173 (proxies /api)
-npm run verify           # typecheck + 84 tests + build + server contract check
+cp .env.example .env     # fill in the keys you actually have
+npm run api              # API on 0.0.0.0:8787
+npm run dev              # web app on 0.0.0.0:5173, proxies /api
+npm run verify           # the full gate
 ```
 
-Open the app: the connection bar under the search box says **Demo data** or
-**live · <account>**. Click it for key presence, mode and retry.
+Open the app. The bar under the search box says **Demo data** or
+**live · <account>**; click it for key presence, auth state and a retry.
 
-### Live mode
+## How it works
 
-| Variable (server only) | Purpose |
-|---|---|
-| `OPENAI_ADS_API_KEY` | Advertiser API: account, campaigns, ad groups, insights, hint push |
-| `OPENAI_CONVERSIONS_API_KEY` | Server-to-server conversion events |
-| `OPENAI_PIXEL_ID` | Data source id for both Pixel and CAPI |
-| `ACCOUNT_TIMEZONE` | Reporting timezone, default `Asia/Kolkata` |
-| `FIRST_PARTY_SOURCE` | Set only when lead/order events really flow; otherwise those columns are masked |
+```
+browser ──/api/*──▶ server/server.mjs ──▶ OpenAI Ads API
+                     keys + consent secret
+```
 
-Keys are read by the API process only. `VITE_` variables are public by
-definition, so no key ever uses that prefix. See [docs/API.md](docs/API.md).
+The browser never holds an OpenAI key. `VITE_*` variables are public by
+definition, so no secret uses that prefix.
 
-### Export
+| Endpoint | Auth | Notes |
+|---|---|---|
+| `GET /api/health` | public | `{ok, mode}` only; details need a token |
+| `POST /api/consent` | public, origin-checked | returns a signed consent id |
+| `POST /api/track` | consent id | origin allowlist, per-IP rate limit, body cap |
+| `GET /api/dataset` | token | insights → dataset in integer minor units |
+| `GET /api/adgroups` | token | current hint sets |
+| `POST /api/adgroups/:id/hints` | token, **admin/owner** | replaces hints, returns the previous set |
+| `POST /api/dev/session` | dev mode only | 404 in production |
 
-Every answer has **Share**: copy a link to the exact question, print / save as
-PDF (print stylesheet included), or download the tables as CSV.
+Details in [docs/API.md](docs/API.md).
 
 ## The interface
 
-One page, modeled on search rather than on a dashboard:
+One page, modelled on search rather than a dashboard. On submit the box docks to the
+top and the answer renders inline — no routes, no tabs. The question lives in the URL
+(`?q=…&m=track`), so answers are shareable, and an unrecognised question falls back to
+a full-funnel overview.
 
-```
-        AdTrack
-   Ask your ChatGPT ads one question  [ 🔍 ]  Track | Research   Ask
-   chips: "How much did I spend this month?" …
-
-   ── on submit the box docks to the top, nothing navigates ──
-
-   You spent ₹1,84,290 in the last 30 days — 96% of your average daily budget.
-   4 tiles → chart → table → "where these numbers come from" → follow-ups
-```
-
-No routes, no tabs, no sidebar. The question is in the URL (`?q=…&m=track`), so an
-answer is shareable. If a question does not match a known intent, it falls back to a
-full-funnel overview rather than refusing.
-
-## What it answers
-
-| Question | You get |
-|---|---|
-| How much did I spend this month? | spend, clicks, impressions, CPC, CPM, pacing, spend-by-campaign |
-| How many leads did I get? | leads, CPL, lead→customer, leads by ad group, daily chart |
-| What is my CAC / ROAS? | customers, CAC, revenue, AOV, per-campaign table |
-| Where are my leads coming from? | country table, spend-share bars, best CPL and CAC market |
-| How is my pacing? | 7-day average budget vs observed spend, and what a rolling average means |
-| Which ad group has the best cost per lead? | ranked table by CPL/CAC/ROAS |
-| Why do native and internal conversions differ? | the gap explained: view-through, dedupe key, refunds |
-| Help me research context hints | the research workspace, inline |
+Answers cover spend, leads, CPL, CAC, ROAS, pacing, country, device, campaign and
+ad-group rankings, plus "why do native and internal conversions differ". Every answer
+carries its sources and a "where these numbers come from" panel.
 
 ## Research (the honest version of "keyword research")
 
-ChatGPT Ads has **no keyword box, no negatives, and no search-terms report**. What it
-has is free-form **context hints** at ad-group level. So research here is:
+ChatGPT Ads has no keyword box, no negatives and no search-terms report — only
+free-form **context hints** at ad-group level. So research is:
 
-`seeds → PII scrub + dedupe → intent tag → semantic cluster → weighted score → conversation-shaped hints → validators → CSV`
+`seeds → PII scrub + dedupe → intent tag → semantic cluster → weighted score → conversation-shaped hints → validators → CSV or push`
 
-- granularity slider (broad ↔ fine) with live re-clustering
-- 5-part score with weights shown (relevance, intent, value, coverage, safety)
-- hint validators that **block** keyword soup, unsupported claims and PII
-- coverage-gap detection, and each cluster mapped to one landing page and one ad group
-
-There is no search volume, because the platform has none. Value is estimated from
-your own lead and revenue data instead.
+Pushing is a two-step operation: a diff modal (current vs proposed, with counts), an
+explicit confirm, then an **Undo** that re-pushes the previous set. Every attempt is
+appended to an audit log.
 
 ## Stack
 
-React 18 · Vite 6 · TypeScript (strict) · Tailwind 3 · Vitest + jsdom · Node 22 API server (no framework).
-No runtime dependencies beyond React; the metrics and research engines are pure
-functions with no I/O. Money is always integer minor units (paise).
+React 18 · Vite 6 · TypeScript (strict) · Tailwind 3 · Vitest + jsdom ·
+Node 22 API (`node:http`, no framework) · ESLint + Prettier · GitHub Actions.
 
-## Rules
+Firebase is **not** in the runtime path yet: there is no browser auth and no Firestore.
+`firebase-admin` is a dependency only for verifying ID tokens when `AUTH_MODE=firebase`.
 
-- Never commit secrets. `.env` locally, Cloud Function secrets in production.
-- The Conversions API key is server-only; the browser only ever sees the Pixel ID.
-- Geography is aggregated to country/region/city — no individual locations.
-- Native (OpenAI-reported) and internal (first-party) attribution are never blended.
-- Amounts are integer minor units; formatting happens only in the UI.
+## Deploy
+
+The API is stateless and ships as a container (non-root, healthcheck, tini):
+
+```bash
+gcloud run deploy adtrack-api --source . --region asia-south1 \
+  --set-secrets OPENAI_ADS_API_KEY=ads-key:latest,OPENAI_CONVERSIONS_API_KEY=capi-key:latest,OPENAI_PIXEL_ID=pixel-id:latest,CONSENT_SECRET=consent-secret:latest
+```
+
+Build the web app separately and serve `dist/` from a static host, with
+`VITE_API_BASE` pointing at the API (or front both with one domain and keep `/api`).
 
 ## Docs
 
 | File | Contents |
 |---|---|
-| [docs/PLAN.md](docs/PLAN.md) | Repository review, architecture, 8-slice plan, risks |
-| [docs/WORKSTREAMS.md](docs/WORKSTREAMS.md) | The six-way split used to build this, with frozen contracts |
-| [docs/FEATURES.md](docs/FEATURES.md) | Feature research: what shipped, what is deferred, what to add next |
-| [docs/API.md](docs/API.md) | Server contract: modes, endpoints, mapping rules, deployment |
+| [docs/PLAN.md](docs/PLAN.md) | Review, architecture, slices, risks |
+| [docs/FEATURES.md](docs/FEATURES.md) | Feature research: what shipped, demo vs live-verified |
+| [docs/API.md](docs/API.md) | Endpoints, guards, deployment, what is not verified |
+| [docs/METRICS.md](docs/METRICS.md) | Metric dictionary and attribution windows |
+| [docs/TRACKING_PLAN.md](docs/TRACKING_PLAN.md) | Events, dedupe, cookies, delivery guards |
+| [docs/PRIVACY.md](docs/PRIVACY.md) | Data map, consent, retention, roles |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Decision log |
-| [docs/METRICS.md](docs/METRICS.md) | Metric dictionary |
-| [docs/TRACKING_PLAN.md](docs/TRACKING_PLAN.md) | Events, dedupe key, cookie lifetimes |
-| [docs/PRIVACY.md](docs/PRIVACY.md) | Consent, retention, deletion |
+| [docs/WORKSTREAMS.md](docs/WORKSTREAMS.md) | How the build was split, and the contracts |
+
+Rules of engagement, all enforced in code: no secrets in the repo; the browser never
+sees an API key; native and internal attribution are never blended; money is integer
+minor units; geography is aggregated to city level; nothing is pushed to an ad account
+without a diff, a confirm and an audit trail.

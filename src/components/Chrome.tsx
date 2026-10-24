@@ -2,7 +2,9 @@ import type { ReactNode } from 'react';
 
 export function Wordmark({ size = 'lg' }: { size?: 'sm' | 'lg' }) {
   return (
-    <span className={`select-none tracking-tight ${size === 'lg' ? 'text-[46px] leading-none sm:text-[56px]' : 'text-[19px]'}`}>
+    <span
+      className={`select-none tracking-tight ${size === 'lg' ? 'text-[46px] leading-none sm:text-[56px]' : 'text-[19px]'}`}
+    >
       <span className="font-normal text-ink">Ad</span>
       <span className="font-medium text-brand">Track</span>
       <span aria-hidden className="ml-1 inline-block align-baseline text-[0.5em] text-[#f9ab00]">

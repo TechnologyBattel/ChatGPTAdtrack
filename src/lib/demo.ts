@@ -149,13 +149,24 @@ export const AD_GROUPS: AdGroup[] = [
 const HINTS_BY_AG = new Map(AD_GROUPS.map((g) => [g.id, g]));
 
 /** Per-ad-group economics, tuned so the story on the page is coherent. */
-const ECON: Record<string, { base: number; ctr: number; cpcMinor: number; l2c: number; leadRate: number; aovMinor: number; trend: number }> = {
+const ECON: Record<
+  string,
+  { base: number; ctr: number; cpcMinor: number; l2c: number; leadRate: number; aovMinor: number; trend: number }
+> = {
   adgrp_gst: { base: 1500, ctr: 0.052, cpcMinor: 26500, leadRate: 0.061, l2c: 0.27, aovMinor: 1499000, trend: 0.55 },
   adgrp_invoice: { base: 1200, ctr: 0.046, cpcMinor: 23800, leadRate: 0.052, l2c: 0.23, aovMinor: 1299000, trend: 0.2 },
   adgrp_size: { base: 900, ctr: 0.041, cpcMinor: 31000, leadRate: 0.058, l2c: 0.31, aovMinor: 1899000, trend: 0.35 },
   adgrp_switch: { base: 700, ctr: 0.038, cpcMinor: 22000, leadRate: 0.047, l2c: 0.26, aovMinor: 1499000, trend: -0.1 },
   adgrp_vs: { base: 620, ctr: 0.035, cpcMinor: 28000, leadRate: 0.05, l2c: 0.29, aovMinor: 1799000, trend: 0.12 },
-  adgrp_gstseason: { base: 2600, ctr: 0.021, cpcMinor: 9500, leadRate: 0.012, l2c: 0.14, aovMinor: 1299000, trend: 0.9 },
+  adgrp_gstseason: {
+    base: 2600,
+    ctr: 0.021,
+    cpcMinor: 9500,
+    leadRate: 0.012,
+    l2c: 0.14,
+    aovMinor: 1299000,
+    trend: 0.9,
+  },
   adgrp_brand: { base: 800, ctr: 0.09, cpcMinor: 6500, leadRate: 0.071, l2c: 0.38, aovMinor: 1499000, trend: 0 },
 };
 

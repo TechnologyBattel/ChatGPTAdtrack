@@ -358,25 +358,51 @@ Retention jobs, deletion/export flow, consent audit, DPA/subprocessor list, DPDP
 
 ---
 
-## 8a. Progress since this plan
+## 8a. Progress against this plan
 
-Slices 0–4 shipped as a working demo in one session, split across the six
-workstreams in `docs/WORKSTREAMS.md`:
-
-| Slice | State | Note |
+| Slice | State | What actually exists |
 |---|---|---|
-| 0 Foundation | ✅ done | Vite + React + TS + Tailwind, tests, `npm run verify` |
-| 1 Shell | 🟡 partial | single page ships; auth/roles still pending |
-| 2 Tracking | ⛔ not started | needs Firebase + keys; `/track` contract designed |
-| 3 Reporting | 🟡 demo | engine + answers built on deterministic demo data, no live sync |
-| 4 Research | ✅ v1 | clustering, scoring, hint validators, CSV export |
-| 5 Push/experiments | ⛔ not started | needs Advertiser API key |
-| 6 Attribution | 🟡 demo | CAC/ROAS logic real, data synthetic |
-| 7 Compliance | ⛔ not started | PII scrubbing ships in research; consent/intake pending |
+| 0 Foundation | **done** | Vite + React + TS strict + Tailwind; ESLint, Prettier, engines, CI on every push; `npm run verify` |
+| 1 Shell + auth | **partial** | Single-page shell ships. Server-side auth gate with roles (dev + Firebase verifiers). **No browser sign-in**, no Firestore, so `analyst`/`viewer` exist only in the API. |
+| 2 Tracking foundation | **partial** | `POST /api/track` with server-verifiable consent ids, origin allowlist, per-IP rate limit, body cap, dedupe-safe event ids, retry/backoff. **Missing:** the Pixel SDK in the browser, an outbox/dead-letter, and event-level health. |
+| 3 Reporting ingest | **partial** | `/api/dataset` pulls insights (country + device segments, daily), maps to integer minor units, caches 5 minutes, flags missing first-party data. **Verified only against a stub**, never a live account. |
+| 4 Keyword research | **done (v1)** | Seeds → scrub → intent → cluster with granularity → weighted score → hint validators → CSV. |
+| 5 Push + experiments | **partial** | Push with diff, confirm, Undo, audit log and an admin role gate. **Missing:** experiments. |
+| 6 Attribution + revenue | **not started** | CAC/ROAS maths exists and is tested, but no first-party ingest, so the UI masks those columns on live data. |
+| 7 Compliance | **partial** | Consent is signed and enforced; privacy doc has decisions, not TODOs. **Missing:** persistence of consent records, retention job, deletion flow, DPAs. |
+
+### Architecture, as built
+
+```
+browser (React, single page)
+  └── /api/*  ──▶ server/server.mjs        HTTP adapter: body cap, ip, auth wiring
+                     └── server/app.mjs     router; every route unit-tested, no sockets
+                            ├── auth.mjs    dev token | Firebase ID token; roles
+                            ├── consent.mjs HMAC-signed consent ids
+                            ├── limits.mjs  rate limit, origin allowlist, body size
+                            └── core.mjs    Ads API + CAPI client (keys live here only)
+```
+
+`server/app.mjs` is deliberately transport-free: `handle({method, path, headers, ip, body})`
+returns `{status, body}`. That is why 47 security assertions run in under a second with
+no server, no network and no keys.
+
+### Deviations from the original plan
+
+| Planned | Built | Why |
+|---|---|---|
+| Cloud Functions | One Node HTTP server in a container | Fewer moving parts while there is one client; the handlers are pure and port to Functions later. |
+| Firestore | No database yet | Nothing needs persistence to prove the flow; consent and audit are stateless/local, and both are flagged as gaps. |
+| Firebase Auth from day one | Server-side gate first | The expensive mistake is an unprotected write path, not a missing login screen. |
+| "Slice 1 complete before slice 2" | Slices 2–5 built first | The user-facing question was the point of the product; auth and hardening landed right after. |
 
 ## 9. Recommended next action
 
-Start **Slice 0 today** (half a day, no dependencies, no keys), then **Slice 1** while the first-user and offer questions are answered. Do not start the keyword-research UI before Slice 2's tracking is live, or the research module will have nothing to learn from.
+1. **Connect a real ad account** and replace the stub with reality — everything else is guessing until the payloads round-trip.
+2. **Persist consent records and the audit log** (Firestore), because both are currently in memory or in the browser.
+3. **Install the Pixel + consent gate in the browser**, so `firstPartyAvailable` can become true and CAC/ROAS stop being em dashes.
+4. **Build the retention/deletion jobs** before any real personal data lands.
+5. Only then: hint-set experiments, alerts, and a shared rate-limit store.
 
 ---
 

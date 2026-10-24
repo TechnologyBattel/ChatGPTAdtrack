@@ -3,12 +3,7 @@
 // "keyword research" here means: seeds -> scrub -> intent -> cluster -> score ->
 // conversation-shaped hints -> validators -> export. All deterministic, no deps.
 
-export type SeedIntent =
-  | 'transactional'
-  | 'comparison'
-  | 'problem'
-  | 'informational'
-  | 'navigational';
+export type SeedIntent = 'transactional' | 'comparison' | 'problem' | 'informational' | 'navigational';
 
 export interface Seed {
   id: string;
@@ -57,7 +52,15 @@ export interface Cluster {
 
 export interface ResearchResult {
   granularity: number;
-  stats: { input: number; unique: number; piiRemoved: number; tooShort: number; clusters: number; hints: number; blockedHints: number };
+  stats: {
+    input: number;
+    unique: number;
+    piiRemoved: number;
+    tooShort: number;
+    clusters: number;
+    hints: number;
+    blockedHints: number;
+  };
   clusters: Cluster[];
   hints: Hint[];
   gaps: string[];
@@ -124,11 +127,57 @@ const SYNONYMS: Record<string, string> = {
 };
 
 const INTENT_RULES: { intent: SeedIntent; words: string[]; weight: number }[] = [
-  { intent: 'transactional', words: ['buy', 'pricing', 'price', 'cost', 'subscribe', 'signup', 'demo', 'quote', 'trial', 'hire', 'purchase', 'plan'], weight: 1 },
-  { intent: 'comparison', words: ['comparison', 'versus', 'alternative', 'better', 'instead', 'switch', 'migrate', 'replace', 'difference'], weight: 0.9 },
-  { intent: 'problem', words: ['manual', 'urgency', 'stress', 'mess', 'wrong', 'error', 'late', 'struggle', 'pain', 'hours', 'tired', 'confus'], weight: 0.8 },
-  { intent: 'navigational', words: ['login', 'log', 'portal', 'download', 'support', 'contact', 'account', 'brand', 'app store'], weight: 0.5 },
-  { intent: 'informational', words: ['how', 'what', 'why', 'guide', 'meaning', 'explain', 'tutorial', 'learn'], weight: 0.4 },
+  {
+    intent: 'transactional',
+    words: [
+      'buy',
+      'pricing',
+      'price',
+      'cost',
+      'subscribe',
+      'signup',
+      'demo',
+      'quote',
+      'trial',
+      'hire',
+      'purchase',
+      'plan',
+    ],
+    weight: 1,
+  },
+  {
+    intent: 'comparison',
+    words: ['comparison', 'versus', 'alternative', 'better', 'instead', 'switch', 'migrate', 'replace', 'difference'],
+    weight: 0.9,
+  },
+  {
+    intent: 'problem',
+    words: [
+      'manual',
+      'urgency',
+      'stress',
+      'mess',
+      'wrong',
+      'error',
+      'late',
+      'struggle',
+      'pain',
+      'hours',
+      'tired',
+      'confus',
+    ],
+    weight: 0.8,
+  },
+  {
+    intent: 'navigational',
+    words: ['login', 'log', 'portal', 'download', 'support', 'contact', 'account', 'brand', 'app store'],
+    weight: 0.5,
+  },
+  {
+    intent: 'informational',
+    words: ['how', 'what', 'why', 'guide', 'meaning', 'explain', 'tutorial', 'learn'],
+    weight: 0.4,
+  },
 ];
 
 const INTENT_VALUE: Record<SeedIntent, number> = {
@@ -247,7 +296,15 @@ export function normalizeSeeds(raw: string): Seed[] {
       continue;
     }
     if (seen.has(clean)) {
-      seeds.push({ id: `s${i}`, text: line, clean, source: 'paste', intent: classify(clean, tokenize(clean)), tokens: tokenize(clean), removed: 'duplicate' });
+      seeds.push({
+        id: `s${i}`,
+        text: line,
+        clean,
+        source: 'paste',
+        intent: classify(clean, tokenize(clean)),
+        tokens: tokenize(clean),
+        removed: 'duplicate',
+      });
       continue;
     }
     seen.add(clean);
@@ -357,24 +414,49 @@ export function validateHint(text: string): ValidatorIssue[] {
   const issues: ValidatorIssue[] = [];
   const words = text.trim().split(/\s+/).filter(Boolean);
   if (words.length < 6)
-    issues.push({ code: 'length', message: `Only ${words.length} words — describe the situation, not a phrase.`, severity: 'block' });
+    issues.push({
+      code: 'length',
+      message: `Only ${words.length} words — describe the situation, not a phrase.`,
+      severity: 'block',
+    });
   if (words.length > 40)
-    issues.push({ code: 'length', message: `${words.length} words is too long; keep one need per hint.`, severity: 'warn' });
-  const situational = /\b(someone|a team|an?\s+\w+|business owner|founder|accountant|buyer|customer|people|reader|user)\b/i.test(text);
-  const hasVerb = /\b(is|are|was|asks|asking|wants|want|needs|need|looking|describing|explaining|deciding|comparing|weighing|trying|checking|learning|saying|ready|has|have)\b/i.test(text);
+    issues.push({
+      code: 'length',
+      message: `${words.length} words is too long; keep one need per hint.`,
+      severity: 'warn',
+    });
+  const situational =
+    /\b(someone|a team|an?\s+\w+|business owner|founder|accountant|buyer|customer|people|reader|user)\b/i.test(text);
+  const hasVerb =
+    /\b(is|are|was|asks|asking|wants|want|needs|need|looking|describing|explaining|deciding|comparing|weighing|trying|checking|learning|saying|ready|has|have)\b/i.test(
+      text,
+    );
   if (!situational || !hasVerb)
-    issues.push({ code: 'keyword-soup', message: 'Reads like a keyword list. Wrap it in a situation with a subject and a verb.', severity: 'block' });
+    issues.push({
+      code: 'keyword-soup',
+      message: 'Reads like a keyword list. Wrap it in a situation with a subject and a verb.',
+      severity: 'block',
+    });
   for (const claim of CLAIM_WORDS) {
     if (text.toLowerCase().includes(claim))
-      issues.push({ code: 'claim', message: `Contains a claim ("${claim}") that ad copy must not assert.`, severity: 'block' });
+      issues.push({
+        code: 'claim',
+        message: `Contains a claim ("${claim}") that ad copy must not assert.`,
+        severity: 'block',
+      });
   }
   for (const re of PII_PATTERNS) {
     if (re.test(text)) issues.push({ code: 'pii', message: 'Contains personal data.', severity: 'block' });
     re.lastIndex = 0;
   }
   if (/\b(best|top|cheapest)\b/i.test(text))
-    issues.push({ code: 'vague', message: 'Superlatives do not help relevance matching; describe the need instead.', severity: 'warn' });
-  if (!issues.some((i) => i.severity !== 'ok')) issues.push({ code: 'ok', message: 'Passes all checks.', severity: 'ok' });
+    issues.push({
+      code: 'vague',
+      message: 'Superlatives do not help relevance matching; describe the need instead.',
+      severity: 'warn',
+    });
+  if (!issues.some((i) => i.severity !== 'ok'))
+    issues.push({ code: 'ok', message: 'Passes all checks.', severity: 'ok' });
   return issues;
 }
 

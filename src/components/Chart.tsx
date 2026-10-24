@@ -40,7 +40,8 @@ export default function Chart({ points, metric, currency }: Props) {
   const line = xy.map((d, i) => `${i === 0 ? 'M' : 'L'}${d.x.toFixed(1)},${d.y.toFixed(1)}`).join(' ');
   const area = `${line} L${xy[xy.length - 1].x.toFixed(1)},${H} L${xy[0].x.toFixed(1)},${H} Z`;
   const prelimStart = xy.find((d) => d.p.preliminary);
-  const fmt = (v: number) => (metric === 'spend' || metric === 'revenue' ? formatMoney(v, currency, true) : formatNumber(v));
+  const fmt = (v: number) =>
+    metric === 'spend' || metric === 'revenue' ? formatMoney(v, currency, true) : formatNumber(v);
   const last = xy[xy.length - 1];
   const label = metric === 'revenue' ? 'revenue' : metric;
 
@@ -48,9 +49,7 @@ export default function Chart({ points, metric, currency }: Props) {
     <div>
       <div className="mb-1 flex items-baseline justify-between">
         <span className="text-[12px] text-muted">Peak {fmt(max)}</span>
-        <span className="num text-[12px] text-muted">
-          Now {fmt(ACCESSOR[metric](points[points.length - 1]))}
-        </span>
+        <span className="num text-[12px] text-muted">Now {fmt(ACCESSOR[metric](points[points.length - 1]))}</span>
       </div>
       <svg
         viewBox={`0 0 ${W} ${H}`}
@@ -69,13 +68,7 @@ export default function Chart({ points, metric, currency }: Props) {
           <line key={f} x1={0} x2={W} y1={H * f} y2={H * f} stroke="#f1f3f4" strokeWidth={1} />
         ))}
         {prelimStart && (
-          <rect
-            x={prelimStart.x}
-            y={0}
-            width={Math.max(0, W - prelimStart.x)}
-            height={H}
-            fill="#f8f9fa"
-          />
+          <rect x={prelimStart.x} y={0} width={Math.max(0, W - prelimStart.x)} height={H} fill="#f8f9fa" />
         )}
         <path d={area} fill={`url(#g-${metric})`} />
         <path d={line} fill="none" stroke="#1a73e8" strokeWidth={2} vectorEffect="non-scaling-stroke" />

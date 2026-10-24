@@ -188,8 +188,8 @@ export default function Answer({ spec, dataset, settings, onFollowUp, live = fal
         </ul>
         <p className="mt-2 text-[12px] leading-5 text-muted">
           Native (OpenAI-reported) and internal (first-party) figures are always shown separately. Native includes 1-day
-          view-through; internal is click-only, last touch, {settings.windowDays}-day window. Money is stored in minor units
-          and formatted for display only.
+          view-through; internal is click-only, last touch, {settings.windowDays}-day window. Money is stored in minor
+          units and formatted for display only.
         </p>
       </details>
 
@@ -204,7 +204,9 @@ export default function Answer({ spec, dataset, settings, onFollowUp, live = fal
           <button
             type="button"
             className="chip"
-            onClick={() => onFollowUp(spec.intent === 'research' ? 'context hints' : 'Help me research context hints', 'research')}
+            onClick={() =>
+              onFollowUp(spec.intent === 'research' ? 'context hints' : 'Help me research context hints', 'research')
+            }
           >
             Research context hints
           </button>
