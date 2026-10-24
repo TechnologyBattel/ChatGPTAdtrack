@@ -200,6 +200,12 @@ export function byCountry(dataset: Dataset, filter: Filter = {}): GroupedMetrics
 }
 
 export function byDevice(dataset: Dataset, filter: Filter = {}): GroupedMetrics[] {
+  // A device-segmented report is fetched separately, because one request can
+  // only carry one segment. Those rows are excluded from every total.
+  if (dataset.segments?.device?.length) {
+    const scoped = { ...dataset, rows: dataset.segments.device };
+    return groupBy(scoped, filter, (r) => r.device, (k) => k[0].toUpperCase() + k.slice(1));
+  }
   return groupBy(dataset, filter, (r) => r.device, (k) => k[0].toUpperCase() + k.slice(1));
 }
 

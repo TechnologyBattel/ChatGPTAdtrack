@@ -35,3 +35,34 @@
     font-variant-numeric: tabular-nums;
   }
 }
+
+/* Print / save-as-PDF: an answer should leave the browser as cleanly as it arrived. */
+@media print {
+  @page {
+    margin: 14mm;
+    size: A4;
+  }
+  html,
+  body {
+    background: #fff !important;
+  }
+  header {
+    position: static !important;
+    border-bottom: 1px solid #dadce0 !important;
+  }
+  article {
+    padding-bottom: 0 !important;
+  }
+  figure,
+  table,
+  .rounded-xl {
+    break-inside: avoid;
+  }
+  a[href^='http']::after {
+    content: '';
+  }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

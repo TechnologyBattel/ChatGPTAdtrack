@@ -26,6 +26,16 @@ A ──▶ B ──┬──▶ C ──┐
 
 Everything D consumes is a pure function from B/C/E, which is also why the UI has no business logic in it — a second agent can replace any stream without touching the page.
 
+## Stream G — live integration (added after the first build)
+
+| Files | Deliverable |
+|---|---|
+| `server/core.mjs`, `server/dev.mjs`, `scripts/check-server.mjs`, `src/lib/api.ts`, `src/components/ConnectionBar.tsx`, `src/components/ExportMenu.tsx` | Server-side Ads API: account verification, insights → dataset mapping (minor units, split segments), consent-gated `/track`, reversible hint push, 5-minute cache, retry with backoff; plus connection status and answer export |
+
+Because this stream crosses the browser boundary, it owns the rule that no key
+may appear in a `VITE_` variable, and it ships a test asserting no key material is
+echoed in any response.
+
 ## Interface contracts (frozen)
 
 ```ts

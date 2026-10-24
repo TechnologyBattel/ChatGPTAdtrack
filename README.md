@@ -6,16 +6,38 @@ workspace, because ChatGPT Ads has no keyword targeting.
 
 ## Status
 
-Working, tested single-page app on demo data (no ad account connected yet).
-64 tests + typecheck + build green via `npm run verify`.
-
-## Run it
+Working, tested single-page app with a real server-side Ads API integration.
+It runs on demo data until keys exist on the server, then switches to the live
+account — nothing in the browser ever holds a key.
 
 ```bash
 npm install
-npm run dev     # http://localhost:5173  (binds 0.0.0.0 for the live preview)
-npm run verify  # typecheck + 64 tests + production build
+cp .env.example .env     # fill in the server keys you actually have
+npm run api              # API server, 0.0.0.0:8787
+npm run dev              # web app, 0.0.0.0:5173 (proxies /api)
+npm run verify           # typecheck + 84 tests + build + server contract check
 ```
+
+Open the app: the connection bar under the search box says **Demo data** or
+**live · <account>**. Click it for key presence, mode and retry.
+
+### Live mode
+
+| Variable (server only) | Purpose |
+|---|---|
+| `OPENAI_ADS_API_KEY` | Advertiser API: account, campaigns, ad groups, insights, hint push |
+| `OPENAI_CONVERSIONS_API_KEY` | Server-to-server conversion events |
+| `OPENAI_PIXEL_ID` | Data source id for both Pixel and CAPI |
+| `ACCOUNT_TIMEZONE` | Reporting timezone, default `Asia/Kolkata` |
+| `FIRST_PARTY_SOURCE` | Set only when lead/order events really flow; otherwise those columns are masked |
+
+Keys are read by the API process only. `VITE_` variables are public by
+definition, so no key ever uses that prefix. See [docs/API.md](docs/API.md).
+
+### Export
+
+Every answer has **Share**: copy a link to the exact question, print / save as
+PDF (print stylesheet included), or download the tables as CSV.
 
 ## The interface
 
@@ -66,7 +88,7 @@ your own lead and revenue data instead.
 
 ## Stack
 
-React 18 · Vite 6 · TypeScript (strict) · Tailwind 3 · Vitest + jsdom.
+React 18 · Vite 6 · TypeScript (strict) · Tailwind 3 · Vitest + jsdom · Node 22 API server (no framework).
 No runtime dependencies beyond React; the metrics and research engines are pure
 functions with no I/O. Money is always integer minor units (paise).
 
@@ -85,6 +107,7 @@ functions with no I/O. Money is always integer minor units (paise).
 | [docs/PLAN.md](docs/PLAN.md) | Repository review, architecture, 8-slice plan, risks |
 | [docs/WORKSTREAMS.md](docs/WORKSTREAMS.md) | The six-way split used to build this, with frozen contracts |
 | [docs/FEATURES.md](docs/FEATURES.md) | Feature research: what shipped, what is deferred, what to add next |
+| [docs/API.md](docs/API.md) | Server contract: modes, endpoints, mapping rules, deployment |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Decision log |
 | [docs/METRICS.md](docs/METRICS.md) | Metric dictionary |
 | [docs/TRACKING_PLAN.md](docs/TRACKING_PLAN.md) | Events, dedupe key, cookie lifetimes |

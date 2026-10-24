@@ -68,8 +68,44 @@ function emptyMetrics(): MetricSet {
   return metricsOf([]);
 }
 
+const FIRST_PARTY = /lead|customer|cpl|cac|roas|revenue|order value|conversions/i;
+
+/**
+ * Live Ads API data has no first-party columns yet. Mask them rather than
+ * rendering a confident ₹0 CPL — a fake zero is worse than an em dash.
+ */
+function maskFirstParty(spec: AnswerSpec): AnswerSpec {
+  const mask = (v: string) => (FIRST_PARTY.test(v) ? true : false);
+  const tiles = spec.tiles.map((t) =>
+    mask(t.label) ? { ...t, value: '—', sub: 'needs first-party data', delta: undefined, tone: 'neutral' as const } : t,
+  );
+  const sections = spec.sections.map((section) => {
+    if (section.kind === 'table') {
+      const bad = section.columns.map((c) => FIRST_PARTY.test(c));
+      return {
+        ...section,
+        rows: section.rows.map((row) => row.map((cell, i) => (bad[i] ? '—' : cell))),
+        note: `${section.note ? section.note + ' ' : ''}Advertiser API data has no lead, customer or revenue columns; connect first-party events to fill the gaps shown as —.`,
+      };
+    }
+    if (section.kind === 'chart' && ['leads', 'customers', 'revenue'].includes(section.metric)) {
+      return { kind: 'text' as const, title: section.title, body: 'This series comes from first-party events, which are not connected yet. Advertiser API delivery metrics are shown elsewhere on this answer.' };
+    }
+    if (section.kind === 'bars') {
+      return section;
+    }
+    return section;
+  });
+  return { ...spec, tiles, sections, sources: [...spec.sources, 'First-party events not connected — columns masked'] };
+}
+
 export function answerFor(query: string, dataset: Dataset, settings: Settings): AnswerSpec {
   const q = query.trim();
+  const spec = buildAnswer(q, dataset, settings);
+  return dataset.firstPartyAvailable === false ? maskFirstParty(spec) : spec;
+}
+
+function buildAnswer(q: string, dataset: Dataset, settings: Settings): AnswerSpec {
   const windowDays = pickWindow(q, settings.windowDays);
   const filter: Filter = { days: windowDays };
   const rows = applyFilter(dataset, filter);

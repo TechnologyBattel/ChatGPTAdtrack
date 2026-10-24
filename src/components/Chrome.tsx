@@ -16,10 +16,12 @@ export function Header({
   children,
   onHome,
   compact,
+  source = 'demo',
 }: {
   children?: ReactNode;
   onHome: () => void;
   compact: boolean;
+  source?: 'demo' | 'live';
 }) {
   return (
     <header
@@ -40,7 +42,13 @@ export function Header({
         >
           Ads docs
         </a>
-        <span className="shrink-0 rounded-full border border-line px-2 py-0.5 text-[11px] text-muted">demo</span>
+        <span
+          className={`shrink-0 rounded-full border px-2 py-0.5 text-[11px] ${
+            source === 'live' ? 'border-[#ceead6] bg-[#e6f4ea] text-good' : 'border-line bg-white text-muted'
+          }`}
+        >
+          {source === 'live' ? 'live' : 'demo'}
+        </span>
       </div>
     </header>
   );

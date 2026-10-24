@@ -62,6 +62,12 @@ export interface Dataset {
   generatedAt: string;
   endDate: string;
   currency: Currency;
+  /** Account timezone reported by the Ads API; absent for demo data. */
+  timezone?: string;
+  /** True when lead/customer/revenue columns come from our own events. */
+  firstPartyAvailable?: boolean;
+  /** Breakout reports fetched separately so totals are never double counted. */
+  segments?: { device?: DayRow[] };
   campaigns: Campaign[];
   adGroups: AdGroup[];
   rows: DayRow[];

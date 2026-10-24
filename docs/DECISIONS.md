@@ -10,3 +10,8 @@
 - 2026-10-24: Internal attribution mirrors native defaults (30-day click, 1-day view-through) so the two numbers are comparable; both are always shown.
 - 2026-10-24: India + INR are supported markets; the ₹725/day minimum campaign budget is accepted and must be reflected in budget modelling.
 - 2026-10-24: All monetary values stored as integer minor units (paise/cents) + ISO-4217 currency; formatting happens only in the UI.
+- 2026-10-24: The browser never holds an OpenAI key. The Ads API is called from a stateless server (`server/core.mjs`), deployed as a container; Vite proxies `/api` so there is no CORS and no localhost dependency.
+- 2026-10-24: Live Advertiser data has no lead/customer/revenue columns. When first-party events are not configured, those values render as `—` instead of a confident ₹0.
+- 2026-10-24: One segment per insights request. Country and device reports are kept in separate arrays so device rows never inflate totals.
+- 2026-10-24: `/api/track` enforces consent, event id, event name and amount-currency server-side; the client is never trusted.
+- 2026-10-24: Pushing a hint set returns the previous set, so every push is reversible.

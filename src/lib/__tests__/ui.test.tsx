@@ -60,6 +60,24 @@ describe('single page shell', () => {
     expect(screen.getByText(/Download CSV/i)).toBeTruthy();
   });
 
+  it('says clearly that the data is demo, not a live account', async () => {
+    render(<App />);
+    // The health probe is async: wait for it to settle into demo mode.
+    const bar = await screen.findByRole('button', { name: /Demo data/i });
+    fireEvent.click(bar);
+    expect(screen.getByText(/never sent to this browser/i)).toBeTruthy();
+    expect(screen.getByText(/Advertiser key:/i)).toBeTruthy();
+  });
+
+  it('exports an answer: link, print and CSV are all offered', () => {
+    render(<App />);
+    askQuestion('What is my ROAS?');
+    fireEvent.click(screen.getByRole('button', { name: /Share/i }));
+    expect(screen.getByRole('menuitem', { name: /Copy link/i })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: /Print/i })).toBeTruthy();
+    expect(screen.getByRole('menuitem', { name: /CSV/i })).toBeTruthy();
+  });
+
   it('offers follow-up questions that are answerable', () => {
     render(<App />);
     askQuestion('What is my ROAS?');
