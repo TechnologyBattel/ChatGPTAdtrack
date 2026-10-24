@@ -15,3 +15,6 @@
 - 2026-10-24: One segment per insights request. Country and device reports are kept in separate arrays so device rows never inflate totals.
 - 2026-10-24: `/api/track` enforces consent, event id, event name and amount-currency server-side; the client is never trusted.
 - 2026-10-24: Pushing a hint set returns the previous set, so every push is reversible.
+- 2026-10-24: A hint push is two steps: an explicit diff (current vs proposed, with counts) then a confirm. No silent overwrites — the ad group's hints are replaced wholesale by the API, and OpenAI keeps no history.
+- 2026-10-24: The rollback copy is the `previousHints` returned by our server, held in a local audit log. It survives reload, not a cleared browser profile; a server-side copy is a Slice 5 item.
+- 2026-10-24: Failed pushes and failed undos are audited too. An audit trail that records only successes hides the incidents you need later.

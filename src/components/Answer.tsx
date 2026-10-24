@@ -9,6 +9,8 @@ interface Props {
   dataset: Dataset;
   settings: Settings;
   onFollowUp: (q: string, mode: 'track' | 'research') => void;
+  /** True only when the server is talking to a real ad account. */
+  live?: boolean;
 }
 
 function DeltaBadge({ delta, goodWhenUp = true }: { delta?: number; goodWhenUp?: boolean }) {
@@ -35,7 +37,14 @@ function TileCard({ tile }: { tile: Tile }) {
   );
 }
 
-function renderSection(section: Section, dataset: Dataset, settings: Settings, onFollowUp: Props['onFollowUp'], index: number) {
+function renderSection(
+  section: Section,
+  dataset: Dataset,
+  settings: Settings,
+  onFollowUp: Props['onFollowUp'],
+  index: number,
+  live: boolean,
+) {
   switch (section.kind) {
     case 'kpis':
       return (
@@ -130,7 +139,13 @@ function renderSection(section: Section, dataset: Dataset, settings: Settings, o
             <h3 className="text-[13px] font-medium text-ink">{section.title}</h3>
             <p className="mt-1 text-[13px] leading-6 text-[#174ea6]">{section.body}</p>
           </div>
-          <Research initialSeeds={section.seed} compactDataset={dataset} onFollowUp={onFollowUp} />
+          <Research
+            initialSeeds={section.seed}
+            compactDataset={dataset}
+            onFollowUp={onFollowUp}
+            live={live}
+            adGroups={dataset.adGroups.map((g) => ({ id: g.id, name: g.name, hints: g.hints }))}
+          />
         </div>
       );
     default:
@@ -138,7 +153,7 @@ function renderSection(section: Section, dataset: Dataset, settings: Settings, o
   }
 }
 
-export default function Answer({ spec, dataset, settings, onFollowUp }: Props) {
+export default function Answer({ spec, dataset, settings, onFollowUp, live = false }: Props) {
   return (
     <article className="animate-rise pb-24">
       <header className="mb-5">
@@ -159,7 +174,7 @@ export default function Answer({ spec, dataset, settings, onFollowUp }: Props) {
       </div>
 
       <div className="space-y-4">
-        {spec.sections.map((s, i) => renderSection(s, dataset, settings, onFollowUp, i))}
+        {spec.sections.map((s, i) => renderSection(s, dataset, settings, onFollowUp, i, live))}
       </div>
 
       <details className="mt-6 rounded-xl border border-line px-4 py-3">

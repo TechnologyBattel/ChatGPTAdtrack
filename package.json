@@ -9,9 +9,10 @@
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "verify": "tsc --noEmit && vitest run && vite build && node scripts/check-server.mjs",
+    "verify": "tsc --noEmit && vitest run && vite build && node scripts/check-server.mjs && node scripts/e2e-push.mjs",
     "api": "node server/dev.mjs",
-    "dev:all": "node server/dev.mjs & vite --host 0.0.0.0 --port 5173 --strictPort"
+    "dev:all": "node server/dev.mjs & vite --host 0.0.0.0 --port 5173 --strictPort",
+    "e2e:push": "node scripts/e2e-push.mjs"
   },
   "dependencies": {
     "react": "18.3.1",

@@ -40,6 +40,9 @@ const env = {
   capiKey: process.env.OPENAI_CONVERSIONS_API_KEY,
   pixelId: process.env.OPENAI_PIXEL_ID ?? process.env.VITE_OPENAI_PIXEL_ID,
   accountTimezone: process.env.ACCOUNT_TIMEZONE ?? 'Asia/Kolkata',
+  // Test-only overrides: point the same handlers at a local stub.
+  adsBase: process.env.ADS_API_BASE,
+  eventsBase: process.env.EVENTS_API_BASE,
 };
 
 const CACHE_MS = 5 * 60 * 1000;

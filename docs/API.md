@@ -109,7 +109,17 @@ Returns the **previous** hint set so the caller can offer a one-click rollback:
 ```
 
 Refuses an empty set, more than 2,000 hints, non-strings, and any hint containing
-an email address.
+an email address. Upstream status codes are preserved (a 403 stays a 403) and the
+upstream `error.message` is passed through unmodified.
+
+The UI wraps this in a confirm gate: a diff of current vs proposed hints, then an
+explicit push, then an Undo button that re-pushes `previousHints`. Every attempt —
+successful or not — is appended to a local audit log (`adtrack.audit.v1`,
+100 entries, `{ at, action, adGroupId, before, after, ok, error }`).
+
+Because OpenAI stores no hint history, `previousHints` in the response is the only
+rollback copy that exists. It lives in the browser's audit log, so it survives a
+page reload but not a cleared profile — worth knowing before a bulk change.
 
 ## Production
 
@@ -130,7 +140,16 @@ handlers in `server/core.mjs` are already pure and env-injected so they port as-
 
 ## Tests
 
-`src/lib/__tests__/server.test.ts` covers the contract with a fake `fetch`:
-no network, no keys required. `scripts/check-server.mjs` boots the real server in
-demo mode, asserts the consent gate rejects, and asserts no key material is echoed.
-Both run in `npm run verify`.
+| Layer | Where | Covers |
+|---|---|---|
+| Handler units | `src/lib/__tests__/server.test.ts` | fake `fetch`: auth, mapping, consent gate, retries, push guards |
+| Component | `src/lib/__tests__/push.test.tsx` | demo-mode disabled state, diff modal, confirm gate, undo, verbatim errors, audit log |
+| Server smoke | `scripts/check-server.mjs` | boots the real server in demo mode; asserts the consent gate and that no key is echoed |
+| End-to-end | `scripts/e2e-push.mjs` | real HTTP server against a **stub** of api.ads.openai.com: live health, minor-unit mapping, push → previous set, local guard rails, undo, 403 pass-through, no key leakage |
+
+All four run in `npm run verify`. `ADS_API_BASE` / `EVENTS_API_BASE` exist only for
+that stub; production never sets them.
+
+**Not verified:** that the real OpenAI Ads API accepts these payloads, returns the
+field names assumed here, or that `context_hints` round-trips exactly as sent. That
+needs a real ad account and key, which by design are not in this repository.

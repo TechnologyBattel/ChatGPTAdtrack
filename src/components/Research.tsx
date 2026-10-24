@@ -1,12 +1,20 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { SAMPLE_SEEDS, runResearch, scoreBreakdown, toCsv, type Cluster, type ResearchResult } from '../lib/research';
 import { byAdGroup, formatMoney, formatPercent, formatRatio } from '../lib/metrics';
 import type { Dataset } from '../lib/types';
+import PushHints, { type TargetAdGroup } from './PushHints';
+import { createLocalStore, summariseEntry, type AuditEntry, type AuditStore } from '../lib/hints';
 
 interface Props {
   initialSeeds?: string;
   compactDataset?: Dataset;
   onFollowUp?: (q: string, mode: 'track' | 'research') => void;
+  /** False in demo mode: the server has no key, so hint sets cannot be pushed. */
+  live?: boolean;
+  /** Ad groups the user may push into, with their current hints. */
+  adGroups?: TargetAdGroup[];
+  /** Injected by tests; defaults to localStorage. */
+  auditStore?: AuditStore;
 }
 
 function ScoreBar({ label, value, weight }: { label: string; value: number; weight: number }) {
@@ -23,11 +31,29 @@ function ScoreBar({ label, value, weight }: { label: string; value: number; weig
   );
 }
 
-export default function Research({ initialSeeds, compactDataset, onFollowUp }: Props) {
+export default function Research({
+  initialSeeds,
+  compactDataset,
+  onFollowUp,
+  live = false,
+  adGroups = [],
+  auditStore,
+}: Props) {
   const [raw, setRaw] = useState(initialSeeds && initialSeeds.length > 3 ? initialSeeds : SAMPLE_SEEDS);
   const [granularity, setGranularity] = useState(50);
   const [result, setResult] = useState<ResearchResult | null>(null);
   const [open, setOpen] = useState<string | null>(null);
+  const store = useMemo(() => auditStore ?? createLocalStore(), [auditStore]);
+  const [audit, setAudit] = useState<AuditEntry[]>(() => store.read());
+  const [targets, setTargets] = useState<Record<string, string>>({});
+
+  const onAudit = useCallback((entries: AuditEntry[]) => setAudit(entries), []);
+
+  // A pushed hint set should be visible on the page immediately, not only in the log.
+  const [pushed, setPushed] = useState<Record<string, string[]>>({});
+  const handlePushed = useCallback((adGroupId: string, after: string[]) => {
+    setPushed((prev) => ({ ...prev, [adGroupId]: after }));
+  }, []);
 
   const run = () => {
     const r = runResearch(raw, granularity);
@@ -56,6 +82,20 @@ export default function Research({ initialSeeds, compactDataset, onFollowUp }: P
 
   const hintIssues = (c: Cluster) =>
     result?.hints.filter((h) => h.clusterId === c.id) ?? [];
+
+  const selectedId = (clusterId: string) => targets[clusterId] ?? adGroups[0]?.id;
+
+  const targetHintsOf = (clusterId: string) => {
+    const group = adGroups.find((g) => g.id === selectedId(clusterId));
+    if (!group) return [];
+    return pushed[group.id] ?? group.hints;
+  };
+
+  const targetAdGroup = (clusterId: string): TargetAdGroup | null => {
+    const group = adGroups.find((g) => g.id === selectedId(clusterId));
+    if (!group) return null;
+    return { ...group, hints: pushed[group.id] ?? group.hints };
+  };
 
   return (
     <section className="rounded-xl border border-line">
@@ -216,17 +256,49 @@ export default function Research({ initialSeeds, compactDataset, onFollowUp }: P
                           </div>
                         )}
 
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => onFollowUp?.(c.name.replace(/^[^:]+:\s*/, '') + ' ad group performance', 'track')}
-                            className="rounded-full border border-line px-3 py-1 text-[11px] text-muted hover:bg-cloud"
-                          >
-                            Check this theme&apos;s performance
-                          </button>
-                          <span className="rounded-full border border-dashed border-line px-3 py-1 text-[11px] text-[#80868b]">
-                            Push to ad group needs an API key
-                          </span>
+                        <div className="space-y-2 rounded-md border border-line px-2.5 py-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <label htmlFor={`target-${c.id}`} className="text-[11px] text-muted">
+                              Target ad group
+                            </label>
+                            {adGroups.length > 0 ? (
+                              <select
+                                id={`target-${c.id}`}
+                                value={targets[c.id] ?? adGroups[0].id}
+                                onChange={(e) => setTargets((prev) => ({ ...prev, [c.id]: e.target.value }))}
+                                className="max-w-[220px] rounded-md border border-line bg-white px-2 py-1 text-[11px] text-ink"
+                              >
+                                {adGroups.map((g) => (
+                                  <option key={g.id} value={g.id}>
+                                    {g.name}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span className="text-[11px] text-[#80868b]">no ad groups loaded</span>
+                            )}
+                            <span className="num text-[11px] text-muted">
+                              {(pushed[targets[c.id] ?? adGroups[0]?.id ?? ''] ?? targetHintsOf(c.id)).length} hints now
+                            </span>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => onFollowUp?.(c.name.replace(/^[^:]+:\s*/, '') + ' ad group performance', 'track')}
+                              className="rounded-full border border-line px-3 py-1 text-[11px] text-muted hover:bg-cloud"
+                            >
+                              Check this theme&apos;s performance
+                            </button>
+                            <PushHints
+                              adGroup={targetAdGroup(c.id)}
+                              candidateHints={hints.filter((h) => !h.blocked).map((h) => h.text)}
+                              live={live}
+                              store={store}
+                              onAudit={onAudit}
+                              onPushed={handlePushed}
+                            />
+                          </div>
                         </div>
                       </div>
                     )}
@@ -240,6 +312,38 @@ export default function Research({ initialSeeds, compactDataset, onFollowUp }: P
                 <span className="font-medium text-ink">Coverage gaps:</span> {result.gaps.join('; ')} — thin clusters are
                 usually where a new ad group earns its budget.
               </p>
+            )}
+
+            {audit.length > 0 && (
+              <details className="rounded-lg border border-line" open>
+                <summary className="cursor-pointer px-3 py-2 text-[12px] font-medium text-ink">
+                  Audit log ({audit.length})
+                </summary>
+                <ul className="divide-y divide-[#f1f3f4] border-t border-line">
+                  {audit.map((entry) => (
+                    <li key={entry.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 px-3 py-1.5 text-[11px]">
+                      <span className="num text-muted">
+                        {new Date(entry.at).toLocaleString('en-IN', {
+                          day: '2-digit',
+                          month: 'short',
+                          hour: '2-digit',
+                          minute: '2-digit',
+                        })}
+                      </span>
+                      <span
+                        className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                          entry.action === 'undo' ? 'bg-brandSoft text-brand' : 'bg-cloud text-muted'
+                        }`}
+                      >
+                        {entry.action}
+                      </span>
+                      <span className="text-ink">{entry.adGroupName ?? entry.adGroupId}</span>
+                      <span className="num text-muted">{summariseEntry(entry)}</span>
+                      {!entry.ok && <span className="text-[#d93025]">failed: {entry.error}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </details>
             )}
           </>
         )}

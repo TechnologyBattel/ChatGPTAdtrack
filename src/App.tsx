@@ -188,9 +188,21 @@ export default function App() {
             {source === 'live' && <span className="ml-2 text-[#80868b]">live account data · cached 5 min</span>}
           </p>
           {asked.mode === 'research' || !spec ? (
-            <Research initialSeeds={asked.q} compactDataset={dataset} onFollowUp={(q, m) => ask(q, m)} />
+            <Research
+              initialSeeds={asked.q}
+              compactDataset={dataset}
+              onFollowUp={(q, m) => ask(q, m)}
+              live={source === 'live' && health?.mode === 'live'}
+              adGroups={dataset.adGroups.map((g) => ({ id: g.id, name: g.name, hints: g.hints }))}
+            />
           ) : (
-            <Answer spec={spec} dataset={dataset} settings={settings} onFollowUp={ask} />
+            <Answer
+              spec={spec}
+              dataset={dataset}
+              settings={settings}
+              onFollowUp={ask}
+              live={source === 'live' && health?.mode === 'live'}
+            />
           )}
         </div>
       </main>

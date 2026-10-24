@@ -2,6 +2,9 @@
 // contracts without forcing a build step onto the deployed container.
 
 export interface ServerEnv {
+  /** Overrides used by the end-to-end stub; production leaves these unset. */
+  adsBase?: string;
+  eventsBase?: string;
   adsKey?: string;
   capiKey?: string;
   pixelId?: string;

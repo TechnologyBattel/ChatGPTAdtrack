@@ -28,7 +28,7 @@ feature sets of Ahrefs / Semrush / Keyword Insights / Keyword Cupid as used in p
 | 14 | Granularity slider | Every serious clustering tool has one; broad vs fine is a judgement call | ✅ live re-cluster, 0–100 |
 | 15 | Coverage / gap detection | Where a new ad group earns its budget | ✅ thin clusters flagged |
 | 16 | Score with visible parts | A composite score without its inputs is unusable | ✅ 5 weighted bars, weights shown |
-| 17 | Export to the ad platform | Research that cannot be pasted somewhere is waste | ✅ CSV now; API push needs keys |
+| 17 | Export to the ad platform | Research that cannot be pasted somewhere is waste | ✅ CSV, plus **push to an ad group** with a diff, a confirm gate, Undo and an audit log |
 | 18 | Hint quality checks | Paste a keyword list into a hint field and it silently underperforms | ✅ blocks keyword soup, claims, PII, too-short |
 
 **Deliberately absent:** search volume, keyword difficulty, keyword planner, and
@@ -39,7 +39,7 @@ them would be the single most damaging thing this tool could do.
 
 - Live Ads API sync (Advertiser key + Conversions API key in Cloud Function secrets)
 - Pixel + CAPI event intake with dedupe (`/track`), consent gate, outbox retry
-- Push hint sets to an ad group (`context_hints`) and version the change
+- ~~Push hint sets to an ad group (`context_hints`) and version the change~~ — done, with local rollback + audit
 - Hint-set experiments with pre-registered primary metric
 - Auth, roles, Firestore security rules, retention/deletion jobs
 

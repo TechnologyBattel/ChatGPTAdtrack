@@ -2,8 +2,11 @@
 // Nothing here reads process.env directly; the caller passes an env object.
 // Keys NEVER reach the browser: this module only ever runs on the server.
 
-const ADS_BASE = 'https://api.ads.openai.com/v1';
-const EVENTS_BASE = 'https://bzr.openai.com/v1/events';
+// Overridable so an end-to-end test can point the same code at a stub.
+// Production always uses the real hosts.
+const DEFAULT_ADS_BASE = 'https://api.ads.openai.com/v1';
+const DEFAULT_EVENTS_BASE = 'https://bzr.openai.com/v1/events';
+
 
 export const SUPPORTED_EVENTS = new Set([
   'page_viewed',
@@ -90,7 +93,7 @@ async function request(url, init, env, attempts = 3) {
 
 async function adsGet(path, env) {
   const key = requireKey(env, 'ads');
-  const res = await request(`${ADS_BASE}${path}`, { headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' } }, env);
+  const res = await request(`${env.adsBase ?? DEFAULT_ADS_BASE}${path}`, { headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' } }, env);
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new ApiError(res.status, 'ads_error', body.error?.message ?? `Ads API ${res.status}`);
   return body;
@@ -99,7 +102,7 @@ async function adsGet(path, env) {
 async function adsPost(path, payload, env) {
   const key = requireKey(env, 'ads');
   const res = await request(
-    `${ADS_BASE}${path}`,
+    `${env.adsBase ?? DEFAULT_ADS_BASE}${path}`,
     {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Accept: 'application/json' },
@@ -308,7 +311,7 @@ export async function track(input, env) {
   if (!env.pixelId) throw new ApiError(503, 'missing_pixel_id', 'No Pixel ID configured on the server.');
 
   const res = await request(
-    `${EVENTS_BASE}?pid=${encodeURIComponent(env.pixelId)}`,
+    `${env.eventsBase ?? DEFAULT_EVENTS_BASE}?pid=${encodeURIComponent(env.pixelId)}`,
     {
       method: 'POST',
       headers: { Authorization: `Bearer ${capiKey}`, 'Content-Type': 'application/json' },
