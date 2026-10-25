@@ -20,7 +20,10 @@ const child = spawn(process.execPath, ['server/server.mjs'], {
     OPENAI_CONVERSIONS_API_KEY: '',
     OPENAI_PIXEL_ID: '',
     TRACK_ORIGINS: 'https://app.test',
-    CONSENT_SECRET: 'gate-consent-secret-0123456789',
+    CONSENT_SECRETS: 'v1:gate-consent-secret-0123456789',
+    CONSENT_SECRET_VERSION: 'v1',
+    // No proxy in front of this gate process, so X-Forwarded-For is ignored.
+    TRUST_PROXY: '0',
   },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
@@ -64,7 +67,7 @@ try {
   console.log('ok  health: public {ok,mode}, details behind auth');
 
   // 2. protected routes reject anonymous callers.
-  for (const path of ['/api/dataset?days=30', '/api/adgroups']) {
+  for (const path of ['/api/dataset?days=30', '/api/adgroups', '/api/audit']) {
     const res = await call(path);
     check(res.status === 401, `${path} should reject anonymous callers, got ${res.status}`);
   }
@@ -102,29 +105,87 @@ try {
     body: JSON.stringify({ eventName: 'lead_created', eventId: 'x', sourceUrl: 'https://evil.test/x' }),
   });
   check(badOrigin.status === 403 && badOrigin.body.error.code === 'origin_not_allowed', 'bad origin must be refused');
-  console.log('ok  track: boolean consent refused, origin allowlist enforced');
 
-  // 6. consent must be recorded first, then the id activates events.
+  const noSession = await call('/api/track', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://app.test' },
+    body: JSON.stringify({ eventName: 'lead_created', eventId: 'x', sourceUrl: 'https://app.test/x' }),
+  });
+  check(
+    noSession.status === 403 && noSession.body.error.code === 'session_required',
+    'a session-less event must be refused',
+  );
+  console.log('ok  track: boolean consent and a missing session refused, origin allowlist enforced');
+
+  // 6. consent is a two-step handshake: session -> consent -> event.
+  const session = await call('/api/session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://app.test' },
+  });
+  check(session.status === 201 && session.body.sessionId?.startsWith('sess_'), 'session should be issued');
   const consent = await call('/api/consent', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Origin: 'https://app.test' },
-    body: JSON.stringify({ granted: true }),
+    body: JSON.stringify({ granted: true, sessionId: session.body.sessionId }),
   });
   check(consent.status === 201 && consent.body.consentId, 'consent record should return an id');
+
+  const eventBody = {
+    eventName: 'lead_created',
+    eventId: 'x',
+    sourceUrl: 'https://app.test/x',
+    sessionId: session.body.sessionId,
+    consentId: consent.body.consentId,
+  };
   const withConsent = await call('/api/track', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Origin: 'https://app.test' },
-    body: JSON.stringify({
-      eventName: 'lead_created',
-      eventId: 'x',
-      sourceUrl: 'https://app.test/x',
-      consentId: consent.body.consentId,
-    }),
+    body: JSON.stringify(eventBody),
   });
   // No upstream keys here, so the CAPI call itself fails closed with 503.
   check(withConsent.status === 503, `a valid consent id should reach the CAPI stage, got ${withConsent.status}`);
   check(withConsent.body.error.code === 'missing_capi_key', 'CAPI stage should report the missing key');
-  console.log('ok  valid consent id is accepted; event stops at the missing-key boundary');
+  console.log('ok  valid session + consent id accepted; event stops at the missing-key boundary');
+
+  // 6b. the same id cannot be used twice, and cannot be moved to another session.
+  const replay = await call('/api/track', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://app.test' },
+    body: JSON.stringify(eventBody),
+  });
+  check(
+    replay.status === 403 && replay.body.error.code === 'consent_replayed',
+    `replay must be refused, got ${replay.status}`,
+  );
+
+  const second = await call('/api/session', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://app.test' },
+  });
+  const crossSession = await call('/api/track', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://app.test' },
+    body: JSON.stringify({ ...eventBody, sessionId: second.body.sessionId }),
+  });
+  check(
+    crossSession.status === 403 && crossSession.body.error.code === 'consent_session_mismatch',
+    `cross-session use must be refused, got ${crossSession.status}`,
+  );
+  console.log('ok  consent ids are single use and session bound');
+
+  // 6c. a forged id is rejected without reaching the CAPI stage.
+  const forged = await call('/api/track', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Origin: 'https://app.test' },
+    body: JSON.stringify({ ...eventBody, sessionId: second.body.sessionId, consentId: 'Zm9yZ2Vk.c2ln' }),
+  });
+  // "Zm9yZ2Vk.c2ln" is not a consent id we signed: the decode fails before any
+  // storage lookup, and the event never reaches the CAPI stage.
+  check(
+    forged.status === 403 && forged.body.error.code.startsWith('consent_'),
+    `forged id must be refused, got ${forged.status} ${forged.body.error?.code}`,
+  );
+  console.log('ok  forged consent ids refused');
 
   // 7. Body size limit. Sent through raw http so the declared Content-Length can
   //    lie about the payload; the server must reject before reading the body.
@@ -156,6 +217,19 @@ try {
   const leak = JSON.stringify([anonHealth.body, authHealth.body, dataset.body, anonPush.body]);
   check(!/sk-|ak_live|ck_live/.test(leak), 'a response leaked key material');
   console.log('ok  no key material in any response');
+
+  // 9. transport hardening: the API refuses to be framed and names its policy.
+  const headers = await fetch(`${BASE}/api/health`);
+  check(headers.headers.get('content-security-policy')?.includes("default-src 'none'"), 'API CSP header missing');
+  check(headers.headers.get('x-content-type-options') === 'nosniff', 'nosniff header missing');
+  check(headers.headers.get('cache-control') === 'no-store', 'API responses must not be cached');
+  console.log('ok  API sends CSP, nosniff and no-store');
+
+  // 10. TRUST_PROXY=0 means a spoofed X-Forwarded-For cannot buy a fresh bucket...
+  //     which we assert by checking the startup line that reports the setting.
+  check(out.includes('trust proxy: 0 hop(s)'), `server should report 0 trusted hops\n${out}`);
+  check(out.includes('storage: memory'), 'server should report the in-memory store');
+  console.log('ok  startup reports trusted hops and storage kind');
 } catch (error) {
   console.error(String(error.message ?? error));
   process.exitCode = 1;

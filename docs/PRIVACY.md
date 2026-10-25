@@ -19,13 +19,19 @@ conversation content, special-category data.
 
 - Consent is **required before any tracking event is sent** and before any cookie
   (`__oppref`, `__obref`) is written.
-- A boolean is not consent. The browser calls `POST /api/consent`, which returns an
-  **HMAC-signed consent id** with scopes and an expiry. `POST /api/track` requires
-  that id and verifies signature, scope and expiry server-side. A forged or expired
-  id is refused with `403`.
-- Withdrawal stops future events immediately. Existing consent ids stay valid until
-  expiry but are not used, because the client must delete them on withdrawal.
-- Default consent TTL: **180 days**, then the visitor is asked again.
+- A boolean is not consent. The browser starts a **session** (`POST /api/session`) and
+  then records the grant (`POST /api/consent`), receiving an **HMAC-signed consent id**.
+  `POST /api/track` verifies signature, scope, lifetime, session binding and that the id
+  has not been used before. Forged, expired, replayed or cross-session ids are refused
+  with `403`.
+- Consent TTL: **15 minutes**, single use — the id authorises one event, not a visitor
+  forever. Sessions last 30 minutes. The mechanism is in
+  [SECURITY.md §3](SECURITY.md).
+- Withdrawal stops future events immediately. Because ids are single use and short lived,
+  nothing outlives a withdrawal: the client stops asking for new ones, and an unused id
+  expires on its own.
+- We store the fact of the grant (session, scopes, key version, issued/expiry/consumed
+  times), not the visitor's identity.
 
 ## Retention (decided)
 
@@ -34,7 +40,7 @@ conversation content, special-category data.
 | Raw events | 13 months | Scheduled job, with a dry-run report before each purge |
 | Lead and order records | 25 months | Same job |
 | Aggregates | Indefinite | Already anonymised |
-| Audit log (push/undo) | 13 months, or the life of the ad group | Local now; server-side with the Firestore migration |
+| Audit log (push/undo) | 13 months, or the life of the ad group | `GET /api/audit` from the store; in-memory cap of 500 entries in dev, Firestore in production |
 
 ## Deletion and export (decided)
 

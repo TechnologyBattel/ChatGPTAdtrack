@@ -1,5 +1,6 @@
 import { defineConfig, type PreviewOptions, type ServerOptions } from 'vite';
 import react from '@vitejs/plugin-react';
+import { contentSecurityPolicy } from './server/csp.mjs';
 
 // The preview serves this app from https://<port>-<sandbox>.e2b.app, so the Host
 // header is not localhost: allowedHosts:true keeps the live preview working.
@@ -28,8 +29,36 @@ const preview = {
   proxy,
 } as unknown as PreviewOptions;
 
-export default defineConfig({
-  plugins: [react()],
+/**
+ * Send the app's security headers from the dev and preview servers, so what the
+ * preview shows is what production sends. The dev policy is the relaxed one
+ * (inline preamble + HMR websocket); the preview is built output, so it gets the
+ * production policy verbatim.
+ */
+type Middleware = (req: unknown, res: { setHeader: (name: string, value: string) => void }, next: () => void) => void;
+type ServerLike = { middlewares: { use: (fn: Middleware) => void } };
+
+function securityHeaders(dev: boolean) {
+  const headers = contentSecurityPolicy({ dev });
+  const attach = (server: ServerLike) => {
+    server.middlewares.use((_req, res, next) => {
+      for (const [k, v] of Object.entries(headers)) res.setHeader(k, v);
+      next();
+    });
+  };
+  return {
+    name: 'adtrack-security-headers',
+    configureServer(server: ServerLike) {
+      attach(server);
+    },
+    configurePreviewServer(server: ServerLike) {
+      attach(server);
+    },
+  };
+}
+
+export default defineConfig(({ command }) => ({
+  plugins: [react(), securityHeaders(command === 'serve')],
   server,
   preview,
-});
+}));

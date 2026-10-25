@@ -39,30 +39,49 @@ export function bearerToken(headers = {}) {
 }
 
 /**
- * Firebase ID token verification via firebase-admin. The SDK is imported lazily
- * so the dev server and the tests never load it; if it is not installed while
- * AUTH_MODE=firebase, we refuse to start rather than run unauthenticated.
+ * firebase-admin is an *optional* dependency: the demo, the tests and any
+ * dev-auth deployment must work without it installed. It is imported lazily, on
+ * first use, and only when AUTH_MODE=firebase. `importAdmin` is injectable so a
+ * test can simulate "not installed" without touching node_modules.
  */
-export function createFirebaseVerifier({ projectId, credential, adminModule } = {}) {
+export function createAdminLoader({ projectId, credential, adminModule, importAdmin } = {}) {
   let ready = null;
 
-  async function load() {
+  return async function loadAdmin() {
     if (ready) return ready;
     ready = (async () => {
-      const admin = adminModule ?? (await import('firebase-admin').catch(() => null));
+      let admin = adminModule;
       if (!admin) {
-        throw new ApiError(500, 'auth_not_configured', 'AUTH_MODE=firebase but firebase-admin is not installed.');
+        try {
+          const importer = importAdmin ?? ((name) => import(name));
+          admin = await importer('firebase-admin');
+        } catch (error) {
+          const reason =
+            error?.code === 'ERR_MODULE_NOT_FOUND' || /Cannot find (module|package)/.test(String(error?.message))
+              ? 'not installed'
+              : String(error?.message ?? error);
+          throw new ApiError(
+            500,
+            'auth_not_configured',
+            `AUTH_MODE=firebase but firebase-admin is ${reason}. It is an optionalDependency: install it only where Firebase auth is used.`,
+          );
+        }
       }
       if (!projectId) {
         throw new ApiError(500, 'auth_not_configured', 'AUTH_MODE=firebase but FIREBASE_PROJECT_ID is not set.');
       }
-      if (!admin.apps.length) {
+      if (!admin.apps?.length) {
         admin.initializeApp({ projectId, ...(credential ? { credential } : {}) });
       }
       return admin;
     })();
     return ready;
-  }
+  };
+}
+
+/** Firebase ID token verification via firebase-admin. */
+export function createFirebaseVerifier({ projectId, credential, adminModule, importAdmin } = {}) {
+  const load = createAdminLoader({ projectId, credential, adminModule, importAdmin });
 
   return async function verifyFirebase(token) {
     const admin = await load();

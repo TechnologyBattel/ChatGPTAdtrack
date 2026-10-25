@@ -11,15 +11,12 @@ function publicHealth(h) {
   return { ok: Boolean(h.ok), mode: h.mode };
 }
 
-function fullHealth(h, config) {
-  return { ...h, configuration: config };
-}
-
 /**
  * deps:
  *   env        — server config (keys, bases, allowlists)
  *   auth       — createAuth(...)
- *   consent    — createConsentStore(...)
+ *   consent    — createConsentService(...)
+ *   store      — storage interface (audit log)
  *   rateLimit  — createRateLimiter(...)
  *   dataset    — async (days) => dataset  (injected so tests skip the network)
  *   logger     — optional
@@ -28,6 +25,7 @@ export function createApp({
   env = {},
   auth,
   consent,
+  store,
   rateLimit,
   dataset,
   logger = console,
@@ -35,11 +33,13 @@ export function createApp({
   now = () => Date.now(),
 } = {}) {
   if (!auth) throw new Error('createApp requires an auth gate.');
-  if (!consent) throw new Error('createApp requires a consent store.');
+  if (!consent) throw new Error('createApp requires a consent service.');
+  if (!store) throw new Error('createApp requires a store.');
 
   let cache = { at: 0, key: '', data: null };
 
   const originAllowlist = env.trackOrigins ?? [];
+  const requireOrigin = env.requireOrigin === true;
 
   async function requirePrincipal(req) {
     return auth.authenticate(req.headers ?? {});
@@ -65,7 +65,16 @@ export function createApp({
           // which mode. Key names, account identity and error text stay behind auth.
           const principal = await auth.authenticate(headers).catch(() => null);
           if (!principal) return { status: 200, body: publicHealth(h) };
-          return { status: 200, body: fullHealth(h, configuration(env)) };
+          const storeHealth = await store.health();
+          return {
+            status: 200,
+            body: {
+              ...h,
+              configuration: configuration(env),
+              storage: { kind: store.kind, ok: Boolean(storeHealth.ok) },
+              auth: { mode: auth.mode, role: principal.role },
+            },
+          };
         }
 
         // ---------------------------------------------------------- dev session
@@ -75,15 +84,26 @@ export function createApp({
           return { status: 200, body: session };
         }
 
+        // -------------------------------------------------------- tracking session
+        // Step 1 of consent: a short-lived session the browser can bind a grant to.
+        if (path === '/api/session' && method === 'POST') {
+          if (rateLimit) rateLimit.hit(`session:${ip}`);
+          assertOrigin(headers, originAllowlist, { requireOrigin });
+          const created = await consent.createSession({ ip, userAgent: headers['user-agent'] });
+          return { status: 201, body: created };
+        }
+
         // --------------------------------------------------------------- consent
+        // Step 2: record the grant for that session and receive a single-use id.
         if (path === '/api/consent' && method === 'POST') {
           if (rateLimit) rateLimit.hit(`consent:${ip}`);
-          assertOrigin(headers, originAllowlist, { requireOrigin: false });
+          assertOrigin(headers, originAllowlist, { requireOrigin });
           const body = req.body ?? {};
           if (body.granted !== true) {
             throw new ApiError(400, 'consent_not_granted', 'Consent can only be recorded when granted is true.');
           }
-          const issued = consent.issue({
+          const issued = await consent.grant({
+            sessionId: body.sessionId,
             scopes: Array.isArray(body.scopes) ? body.scopes : ['measurement'],
             subjectHash: typeof body.subjectHash === 'string' ? body.subjectHash : undefined,
           });
@@ -92,7 +112,7 @@ export function createApp({
 
         // --------------------------------------------------------------- dataset
         if (path === '/api/dataset' && method === 'GET') {
-          const principal = await requirePrincipal(req);
+          await requirePrincipal(req);
           const days = Math.min(365, Math.max(1, Number(req.query?.days ?? 90)));
           if (!configuration(env).live) {
             return { status: 200, body: { mode: 'demo', reason: 'No keys configured on the server.' } };
@@ -101,7 +121,7 @@ export function createApp({
           if (cache.data && cache.key === key && now() - cache.at < cacheMs) {
             return { status: 200, body: cache.data };
           }
-          const payload = { mode: 'live', dataset: await dataset(days, principal) };
+          const payload = { mode: 'live', dataset: await dataset(days) };
           cache = { at: now(), key, data: payload };
           return { status: 200, body: payload };
         }
@@ -110,14 +130,24 @@ export function createApp({
         if (path === '/api/track' && method === 'POST') {
           // Track is the one public write path, so it carries every other guard.
           if (rateLimit) rateLimit.hit(`track:${ip}`);
-          assertOrigin(headers, originAllowlist, { requireOrigin: env.requireOrigin === true });
+          assertOrigin(headers, originAllowlist, { requireOrigin });
           const body = req.body ?? {};
-          // Consent must be a server-issued id. `consent: true` is not accepted.
-          const grant = consent.verify(body.consentId, 'measurement');
           if (body.consent === true || body.consent === false) {
-            // Flag the deprecated shape rather than letting it silently pass.
-            logger.warn?.('[api] /api/track received a boolean consent field; requiring consentId instead');
+            throw new ApiError(
+              403,
+              'consent_required',
+              'A boolean consent field is not consent. Send a consentId issued by /api/consent.',
+            );
           }
+          // Session first: it is cheap to check and gives a clearer error than a
+          // signature failure when the client forgot to start one.
+          await consent.requireSession(body.sessionId);
+          const grant = await consent.consume({
+            consentId: body.consentId,
+            sessionId: body.sessionId,
+            scope: 'measurement',
+          });
+
           const result = await track(
             {
               eventName: body.eventName,
@@ -128,12 +158,15 @@ export function createApp({
               obref: body.obref,
               amountMinor: body.amountMinor,
               currency: body.currency,
-              consent: true, // already verified above
+              consent: true, // verified above
               user: body.user,
             },
             env,
           );
-          return { status: 202, body: { ...result, consent: { expiresAt: grant.expiresAt } } };
+          return {
+            status: 202,
+            body: { ...result, consent: { expiresAt: grant.expiresAt, consumedAt: grant.consumedAt } },
+          };
         }
 
         // ------------------------------------------------------------ hint push
@@ -145,10 +178,34 @@ export function createApp({
           auth.requireWrite(principal);
           const adGroupId = decodeURIComponent(push[1]);
           const hints = Array.isArray(req.body?.hints) ? req.body.hints : [];
-          const result = await pushHintSet(adGroupId, hints, env);
+          const previous = await pushHintSet(adGroupId, hints, env);
+
+          // Push history now lives server-side, so it survives a cleared browser and
+          // is visible to every admin rather than only the one who clicked.
+          await store.audit.append({
+            id: `audit_${now()}_${Math.random().toString(36).slice(2, 8)}`,
+            at: now(),
+            action: 'push',
+            adGroupId,
+            before: previous.previousHints ?? [],
+            after: previous.pushedHints ?? hints,
+            actor: principal.uid,
+            actorRole: principal.role,
+            ok: true,
+          });
+
           cache = { at: 0, key: '', data: null };
           logger.info?.(`[api] ${principal.uid} (${principal.role}) pushed ${hints.length} hints to ${adGroupId}`);
-          return { status: 200, body: result };
+          return { status: 200, body: previous };
+        }
+
+        // ------------------------------------------------------------- audit log
+        if (path === '/api/audit' && method === 'GET') {
+          const principal = await requirePrincipal(req);
+          const limit = Math.min(200, Math.max(1, Number(req.query?.limit ?? 50)));
+          const adGroupId = req.query?.adGroupId || undefined;
+          const entries = await store.audit.list({ adGroupId, limit });
+          return { status: 200, body: { entries, actor: principal.uid } };
         }
 
         // Read-only ad groups for the research target picker.

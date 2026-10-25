@@ -1,14 +1,27 @@
-// End-to-end check of the push/undo path through the real HTTP server.
+// End-to-end check of the push/undo path through the real transport, router and
+// core, with a stub upstream.
 //
 // The OpenAI Ads hosts are replaced by a local stub via ADS_API_BASE, so this
 // proves our routing, JSON handling, previous-set capture and error mapping.
 // It does NOT prove the real API accepts the payload — see docs/API.md.
+//
+// It mounts the app in-process instead of spawning server/server.mjs, because the
+// test needs dev auth *and* account keys, and config.mjs deliberately refuses that
+// combination for a real server (gap 1). Tests may bypass the startup guard; a
+// deployment may not.
 import http from 'node:http';
-import { spawn } from 'node:child_process';
 import { setTimeout as sleep } from 'node:timers/promises';
+import { createApp } from '../server/app.mjs';
+import { createAuth } from '../server/auth.mjs';
+import { createConsentService } from '../server/consent.mjs';
+import { createDatasetLoader } from '../server/dataset.mjs';
+import { createRequestListener } from '../server/handler.mjs';
+import { createRateLimiter } from '../server/limits.mjs';
+import { createMemoryStore } from '../server/store.mjs';
 
 const STUB = 8898;
 const API = 8897;
+const TOKEN = 'e2e_dev_token_9876543210';
 
 const state = {
   hints: ['an accountant filing returns manually', 'someone who is behind on GST filing'],
@@ -117,28 +130,32 @@ const anon = async (path, init = {}) => {
 
 await new Promise((r) => stub.listen(STUB, '127.0.0.1', r));
 
-const TOKEN = 'e2e_dev_token_9876543210';
-const api = spawn(process.execPath, ['server/server.mjs'], {
-  env: {
-    ...process.env,
-    NODE_ENV: 'development',
-    AUTH_MODE: 'dev',
-    DEV_AUTH_TOKEN: TOKEN,
-    DEV_AUTH_ROLE: 'admin',
-    CONSENT_SECRET: 'e2e-consent-secret-0123456789',
-    TRACK_ORIGINS: 'http://127.0.0.1:5173',
-    API_PORT: String(API),
-    OPENAI_ADS_API_KEY: 'test_ads_key',
-    OPENAI_CONVERSIONS_API_KEY: 'test_capi_key',
-    OPENAI_PIXEL_ID: 'px_stub',
-    ADS_API_BASE: `http://127.0.0.1:${STUB}/v1`,
-    FIRST_PARTY_SOURCE: '',
-  },
-  stdio: ['ignore', 'pipe', 'pipe'],
+const env = {
+  adsKey: 'test_ads_key',
+  capiKey: 'test_capi_key',
+  pixelId: 'px_stub',
+  adsBase: `http://127.0.0.1:${STUB}/v1`,
+  accountTimezone: 'Asia/Kolkata',
+  trackOrigins: ['http://127.0.0.1:5173'],
+  requireOrigin: false,
+};
+const store = createMemoryStore();
+const app = createApp({
+  env,
+  auth: createAuth({ mode: 'dev', devToken: TOKEN, devRole: 'admin' }),
+  consent: createConsentService({
+    secrets: [{ version: 'v1', secret: 'e2e-consent-secret-0123456789' }],
+    currentVersion: 'v1',
+    store,
+  }),
+  store,
+  rateLimit: createRateLimiter({ limit: 1000 }),
+  dataset: createDatasetLoader({ env }),
+  logger: { info: () => {}, warn: () => {}, error: () => {} },
 });
-let logs = '';
-api.stdout.on('data', (d) => (logs += d));
-api.stderr.on('data', (d) => (logs += d));
+const server = http.createServer(createRequestListener({ app, logger: { error: () => {} } }));
+await new Promise((r) => server.listen(API, '127.0.0.1', r));
+const logs = 'app mounted in-process on ' + API;
 
 try {
   let health = null;
@@ -214,6 +231,22 @@ try {
   check(state.hints.length === 2, 'upstream should hold the restored set again');
   console.log('ok  undo restores the previous set');
 
+  // Push history is server-side now (gap 8): the undo above must be visible to any
+  // admin, not just the browser that performed it.
+  const audit = await call('/api/audit?adGroupId=adgrp_stub&limit=10');
+  check(audit.status === 200, `audit should be readable, got ${audit.status}`);
+  check(audit.body.entries.length === 2, `push and undo must both be recorded, got ${audit.body.entries.length}`);
+  check(
+    audit.body.entries[0].action === 'push' && audit.body.entries[0].after.length === 2,
+    'newest entry is the undo',
+  );
+  check(audit.body.entries[0].before.join('|') === pushed.join('|'), 'the undo records what it replaced');
+  check(
+    audit.body.entries[1].before.join('|') !== audit.body.entries[1].after.join('|'),
+    'the first entry has a real diff',
+  );
+  console.log('ok  push history is stored server-side and readable by role');
+
   state.failNextWrite = { status: 403, message: 'missing scope ads_write' };
   const failure = await call('/api/adgroups/adgrp_stub/hints', {
     method: 'POST',
@@ -232,6 +265,6 @@ try {
   console.error(logs);
   process.exitCode = 1;
 } finally {
-  api.kill('SIGTERM');
+  server.close();
   stub.close();
 }

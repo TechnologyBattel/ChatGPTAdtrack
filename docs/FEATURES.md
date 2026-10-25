@@ -47,13 +47,19 @@ that needs keys, which by design are not here.
 negative keywords. They do not exist on this channel — shipping fake versions of
 them would be the single most damaging thing this tool could do.
 
-## C. Deliberately deferred (needs a backend or a decision)
+## C. Built, and what is deliberately deferred
 
-- Live Ads API sync (Advertiser key + Conversions API key in Cloud Function secrets)
-- Pixel + CAPI event intake with dedupe (`/track`), consent gate, outbox retry
-- ~~Push hint sets to an ad group (`context_hints`) and version the change~~ — done, with local rollback + audit
-- Hint-set experiments with pre-registered primary metric
-- Auth, roles, Firestore security rules, retention/deletion jobs
+- Live Ads API sync (Advertiser key + Conversions API key server-side) — **built**, unproven against the real API.
+- Event intake with dedupe, session→consent handshake, origin allowlist, rate limit — **built**; the outbox retry is still deferred.
+- Push hint sets (`context_hints`) with diff, confirm, undo and **server-side** history (`GET /api/audit`) — **built**.
+- Auth: dev and Firebase modes, roles, login overlay, `scripts/set-role.mjs` for claims — **built**; [SECURITY.md](SECURITY.md) is the reference.
+- Storage interface with memory + Firestore implementations, `STORAGE=firestore` required in production — **built**; the Firestore adapter has not met a real database.
+
+Still deferred, needs a backend or a decision:
+
+- Hint-set experiments with a pre-registered primary metric
+- Firestore security rules, retention/deletion jobs
+- A shared rate-limit counter (the limiter is per instance)
 
 ## D. Suggestions worth considering next
 

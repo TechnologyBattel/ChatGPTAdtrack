@@ -1,5 +1,6 @@
 import type { AuthGate } from './auth.mjs';
-import type { ConsentStore } from './consent.mjs';
+import type { ConsentService } from './consent.mjs';
+import type { Store } from './store.mjs';
 import type { RateLimiter } from './limits.mjs';
 
 export interface AppRequest {
@@ -24,7 +25,8 @@ export interface App {
 export declare function createApp(deps: {
   env?: Record<string, any>;
   auth: AuthGate;
-  consent: ConsentStore;
+  consent: ConsentService;
+  store: Store;
   rateLimit?: RateLimiter;
   dataset?: (days: number, principal?: unknown) => Promise<unknown>;
   logger?: { info?: (m: string) => void; warn?: (m: string) => void; error?: (m: string) => void };

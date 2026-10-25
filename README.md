@@ -7,9 +7,15 @@ workspace, because ChatGPT Ads has no keyword targeting.
 ## Status
 
 Working single-page app on a single Node API. It runs on **demo data** until keys
-exist on the server, then switches to the **live** account. Every route except
-`POST /api/track` and `GET /api/health` requires an auth token; production
-(`NODE_ENV=production`) refuses to start without `AUTH_MODE=firebase`.
+exist on the server, then switches to the **live** account. Every route except the
+tracking handshake (`/api/session`, `/api/consent`, `/api/track`) and the shallow
+`GET /api/health` requires an auth token. The one-page rule survives login: the sign-in
+screen is an overlay, not a route.
+
+Production refuses to start without `AUTH_MODE=firebase`; dev auth refuses to start at all
+when an ad account key is set on the same process, because dev auth hands a write role to
+anyone who can reach it. Token storage, the consent handshake, roles and the CSP are
+documented once, in [docs/SECURITY.md](docs/SECURITY.md).
 
 `npm run verify` is the gate: lint, format, typecheck, tests, build, and three
 run-it-for-real checks (server guards, production start-up guards, push/undo e2e).
@@ -77,8 +83,11 @@ appended to an audit log.
 React 18 · Vite 6 · TypeScript (strict) · Tailwind 3 · Vitest + jsdom ·
 Node 22 API (`node:http`, no framework) · ESLint + Prettier · GitHub Actions.
 
-Firebase is **not** in the runtime path yet: there is no browser auth and no Firestore.
-`firebase-admin` is a dependency only for verifying ID tokens when `AUTH_MODE=firebase`.
+`firebase-admin` is an **optionalDependency**, imported only when `AUTH_MODE=firebase`;
+the demo and the test suite run without it. The browser signs in over Firebase's public
+REST endpoints (no SDK in the bundle) and keeps the token in `sessionStorage` — never
+`localStorage`, never a cookie. Consent recording and push history sit behind one storage
+interface with in-memory and Firestore implementations.
 
 ## Deploy
 
@@ -86,7 +95,8 @@ The API is stateless and ships as a container (non-root, healthcheck, tini):
 
 ```bash
 gcloud run deploy adtrack-api --source . --region asia-south1 \
-  --set-secrets OPENAI_ADS_API_KEY=ads-key:latest,OPENAI_CONVERSIONS_API_KEY=capi-key:latest,OPENAI_PIXEL_ID=pixel-id:latest,CONSENT_SECRET=consent-secret:latest
+  --set-secrets OPENAI_ADS_API_KEY=ads-key:latest,OPENAI_CONVERSIONS_API_KEY=capi-key:latest,OPENAI_PIXEL_ID=pixel-id:latest,CONSENT_SECRETS=consent-secrets:latest \
+  --set-env-vars AUTH_MODE=firebase,STORAGE=firestore,TRUST_PROXY=1
 ```
 
 Build the web app separately and serve `dist/` from a static host, with
@@ -99,6 +109,7 @@ Build the web app separately and serve `dist/` from a static host, with
 | [docs/PLAN.md](docs/PLAN.md) | Review, architecture, slices, risks |
 | [docs/FEATURES.md](docs/FEATURES.md) | Feature research: what shipped, demo vs live-verified |
 | [docs/API.md](docs/API.md) | Endpoints, guards, deployment, what is not verified |
+| [docs/SECURITY.md](docs/SECURITY.md) | Auth, roles, consent handshake, token storage, CSP, storage interface, verified/unverified |
 | [docs/METRICS.md](docs/METRICS.md) | Metric dictionary and attribution windows |
 | [docs/TRACKING_PLAN.md](docs/TRACKING_PLAN.md) | Events, dedupe, cookies, delivery guards |
 | [docs/PRIVACY.md](docs/PRIVACY.md) | Data map, consent, retention, roles |

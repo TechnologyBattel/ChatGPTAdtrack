@@ -17,10 +17,10 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "set-role": "node scripts/set-role.mjs"
   },
   "dependencies": {
-    "firebase-admin": "13.0.2",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },
@@ -49,5 +49,8 @@
   "engines": {
     "node": ">=22.0.0",
     "npm": ">=10"
+  },
+  "optionalDependencies": {
+    "firebase-admin": "13.0.2"
   }
 }

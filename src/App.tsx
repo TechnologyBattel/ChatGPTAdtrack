@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { answerFor, SUGGESTIONS } from './lib/answer';
 import { DEFAULT_SETTINGS, formatMoney, formatRatio, metricsOf } from './lib/metrics';
 import { buildDataset } from './lib/demo';
-import { bootstrapDevSession, getDataset, getHealth, type Health } from './lib/api';
+import { getDataset, getHealth, type Health } from './lib/api';
+import { AUTH_REQUIRED_EVENT, useAuth } from './lib/use-auth';
+import LoginScreen from './components/LoginScreen';
 import type { Dataset } from './lib/types';
 import SearchBar, { type Mode } from './components/SearchBar';
 import Answer from './components/Answer';
@@ -23,13 +25,15 @@ export default function App() {
   const [settings, setSettings] = useState(DEFAULT_SETTINGS);
   const [asked, setAsked] = useState<Asked>(null);
   const [mode, setMode] = useState<Mode>('track');
+  const auth = useAuth();
+  // The login screen is an overlay on this page, never a route: the URL still
+  // carries only the question.
+  const [loginOpen, setLoginOpen] = useState(false);
 
   const connect = useCallback(async () => {
     setLoading(true);
     try {
-      // Development mints a token so the preview stays usable; in production this
-      // route does not exist and the app runs signed-out until auth is wired in.
-      await bootstrapDevSession();
+      // The auth layer (lib/use-auth.ts) has already restored or minted a token.
       const h = await getHealth();
       setHealth(h);
       if (h.mode === 'live' && h.authenticated) {
@@ -55,6 +59,37 @@ export default function App() {
   useEffect(() => {
     void connect();
   }, [connect]);
+
+  // A 401 anywhere means we need a credential: offer the overlay rather than a
+  // dead panel. Dev mode usually signs in silently first, so this is rare there.
+  useEffect(() => {
+    const open = () => setLoginOpen(true);
+    window.addEventListener(AUTH_REQUIRED_EVENT, open);
+    return () => window.removeEventListener(AUTH_REQUIRED_EVENT, open);
+  }, []);
+
+  const authSlot = auth.session ? (
+    <button
+      type="button"
+      onClick={() => {
+        auth.signOut();
+        setLoginOpen(false);
+        setSource('demo');
+        void connect();
+      }}
+      className="shrink-0 rounded-full border border-line px-2.5 py-1 text-[11px] text-muted transition hover:bg-cloud"
+    >
+      Sign out
+    </button>
+  ) : (
+    <button
+      type="button"
+      onClick={() => setLoginOpen(true)}
+      className="shrink-0 rounded-full bg-brand px-3 py-1 text-[11px] font-medium text-white transition hover:bg-[#1765cc]"
+    >
+      Sign in
+    </button>
+  );
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -106,10 +141,25 @@ export default function App() {
   const windowChips = [7, 14, 30] as const;
   const totals = useMemo(() => metricsOf(dataset.rows), [dataset]);
 
+  if (loginOpen && !auth.session) {
+    return (
+      <div className="fixed inset-0 z-50 overflow-y-auto bg-white">
+        <LoginScreen
+          provider={auth.provider}
+          reason="Sign in to load your ad account. Demo data needs no account."
+          onSignedIn={() => {
+            setLoginOpen(false);
+            void connect();
+          }}
+        />
+      </div>
+    );
+  }
+
   if (!asked) {
     return (
       <div className="flex min-h-screen flex-col">
-        <Header onHome={home} compact={false} source={source} />
+        <Header onHome={home} compact={false} source={source} authSlot={authSlot} />
         <main className="flex flex-1 flex-col items-center justify-center px-4 pb-20">
           <div className="w-full max-w-[680px]">
             <div className="mb-6 text-center">
@@ -152,7 +202,7 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen flex-col">
-      <Header onHome={home} compact source={source}>
+      <Header onHome={home} compact source={source} authSlot={authSlot}>
         <div className="flex items-center gap-2">
           <div className="min-w-0 flex-1">
             <SearchBar

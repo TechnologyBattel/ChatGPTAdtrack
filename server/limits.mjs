@@ -15,8 +15,10 @@ export async function readJsonBody(stream, { maxBytes = DEFAULT_MAX_BODY_BYTES }
     }
     chunks.push(chunk);
   }
-  if (!chunks.length) return {};
-  const raw = Buffer.concat(chunks).toString('utf8');
+  const raw = chunks.length ? Buffer.concat(chunks).toString('utf8') : '';
+  // An empty body is "no fields", not malformed JSON: a chunked request may send
+  // zero-length chunks, and a POST with nothing to say is still a valid request.
+  if (raw.trim() === '') return {};
   try {
     const parsed = JSON.parse(raw);
     if (parsed === null || typeof parsed !== 'object') {
@@ -71,13 +73,37 @@ export function createRateLimiter({ limit = 60, windowMs = 60_000, now = () => D
   };
 }
 
-export function clientIp(headers = {}, socketAddress) {
+/**
+ * Resolve the client address.
+ *
+ * X-Forwarded-For is attacker-controlled on the left: a client can prepend
+ * anything. It is only trustworthy when we know how many proxies of our own sit in
+ * front of the app, so `trustProxy` is the number of hops to skip from the RIGHT.
+ * With TRUST_PROXY unset (0) the header is ignored entirely and the socket address
+ * is used, which is the only safe default when the topology is unknown.
+ *
+ *   trustProxy=0  header ignored
+ *   trustProxy=1  "spoofed, real-client"        -> real-client   (rightmost)
+ *   trustProxy=2  "spoofed, real-client, p1"    -> real-client   (second from right)
+ */
+export function clientIp(headers = {}, socketAddress, { trustProxy = 0 } = {}) {
+  const socket = socketAddress ?? 'unknown';
+  const hops = Number.isFinite(trustProxy) ? Math.max(0, Math.trunc(trustProxy)) : 0;
+  if (hops === 0) return socket;
+
   const forwarded = headers['x-forwarded-for'] ?? headers['X-Forwarded-For'];
-  if (typeof forwarded === 'string' && forwarded.length) {
-    const first = forwarded.split(',')[0].trim();
-    if (first) return first;
-  }
-  return socketAddress ?? 'unknown';
+  if (typeof forwarded !== 'string' || forwarded.trim() === '') return socket;
+
+  const entries = forwarded
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (entries.length === 0) return socket;
+
+  // Walk in from the right past our own proxies; clamp so a short header still
+  // resolves to the leftmost (farthest upstream) address rather than to a proxy.
+  const index = Math.max(0, entries.length - hops);
+  return entries[index] ?? socket;
 }
 
 /**

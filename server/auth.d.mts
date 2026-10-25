@@ -21,9 +21,16 @@ export declare function createAuth(opts: {
   devRole?: string;
   verifyToken?: (token: string) => Promise<Principal>;
 }): AuthGate;
+export declare function createAdminLoader(opts?: {
+  projectId?: string;
+  credential?: unknown;
+  adminModule?: unknown;
+  importAdmin?: (name: string) => Promise<any>;
+}): () => Promise<any>;
 export declare function createFirebaseVerifier(opts?: {
   projectId?: string;
   credential?: unknown;
   adminModule?: unknown;
+  importAdmin?: (name: string) => Promise<any>;
 }): (token: string) => Promise<Principal>;
 export declare function generateDevToken(): string;

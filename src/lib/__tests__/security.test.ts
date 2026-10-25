@@ -1,9 +1,14 @@
 // @vitest-environment node
+//
+// Security behaviour of the server, one describe block per guarantee. The tests
+// are the specification: if a guard is dropped, one of these fails.
+
 import { describe, expect, it, vi } from 'vitest';
 import { createApp } from '../../../server/app.mjs';
 import type { Principal } from '../../../server/auth.mjs';
-import { createAuth, bearerToken, hasRole, safeEqual, WRITE_ROLES } from '../../../server/auth.mjs';
-import { createConsentStore } from '../../../server/consent.mjs';
+import { createAdminLoader, createAuth, bearerToken, hasRole, safeEqual, WRITE_ROLES } from '../../../server/auth.mjs';
+import { createConsentService } from '../../../server/consent.mjs';
+import { createMemoryStore } from '../../../server/store.mjs';
 import {
   assertDeclaredSize,
   assertOrigin,
@@ -14,10 +19,19 @@ import {
 } from '../../../server/limits.mjs';
 
 const DEV_TOKEN = 'dev_test_token_1234567890';
+const SECRET_V1 = 'consent-secret-version-one';
+const SECRET_V2 = 'consent-secret-version-two';
+
+const quiet = { info: () => {}, warn: () => {}, error: () => {} };
 
 function makeApp(overrides: Record<string, unknown> = {}) {
   const auth = createAuth({ mode: 'dev', devToken: DEV_TOKEN, devRole: 'owner' });
-  const consent = createConsentStore({ secret: 'test-secret-value-1234' });
+  const store = createMemoryStore();
+  const consent = createConsentService({
+    secrets: [{ version: 'v1', secret: SECRET_V1 }],
+    currentVersion: 'v1',
+    store,
+  });
   const dataset = vi.fn(async () => ({
     generatedAt: 'x',
     endDate: '2026-10-24',
@@ -31,15 +45,34 @@ function makeApp(overrides: Record<string, unknown> = {}) {
     env: { adsKey: 'ads_key_value', capiKey: 'capi_key_value', trackOrigins: ['https://app.test'] },
     auth,
     consent,
+    store,
     rateLimit: createRateLimiter({ limit: 100 }),
     dataset,
-    logger: { info: () => {}, warn: () => {}, error: () => {} },
+    logger: quiet,
     ...overrides,
   });
-  return { app, auth, consent, dataset };
+  return { app, auth, consent, store, dataset };
 }
 
 const authed = (extra: Record<string, string> = {}) => ({ authorization: `Bearer ${DEV_TOKEN}`, ...extra });
+
+/** Full consent handshake; returns the pair a browser would hold. */
+async function handshake(app: { handle: (req: Record<string, unknown>) => Promise<{ body: Record<string, any> }> }) {
+  const session = await app.handle({
+    method: 'POST',
+    path: '/api/session',
+    headers: { origin: 'https://app.test' },
+    ip: '1.1.1.1',
+  });
+  const consent = await app.handle({
+    method: 'POST',
+    path: '/api/consent',
+    headers: { origin: 'https://app.test' },
+    ip: '1.1.1.1',
+    body: { granted: true, sessionId: session.body.sessionId },
+  });
+  return { sessionId: session.body.sessionId, consentId: consent.body.consentId, session, consent };
+}
 
 describe('auth primitives', () => {
   it('extracts a bearer token case-insensitively', () => {
@@ -91,66 +124,213 @@ describe('auth primitives', () => {
       mode: 'firebase',
       verifyToken: async () => ({ uid: 'u2', role: 'root', via: 'firebase' }),
     });
-    // The injected verifier here returns 'root'; createApp's gate must not grant writes for it.
     expect(() => gate.requireWrite({ uid: 'u2', role: 'root' })).toThrow();
   });
 });
 
-describe('consent ids', () => {
-  const store = createConsentStore({ secret: 'test-secret-value-1234', ttlSeconds: 60 });
-
-  it('issues a verifiable id', () => {
-    const { consentId } = store.issue();
-    const grant = store.verify(consentId);
-    expect(grant.scopes).toEqual(['measurement']);
+describe('firebase-admin is optional and lazily loaded (gap 7)', () => {
+  it('explains a missing module instead of throwing a module error', async () => {
+    const load = createAdminLoader({
+      projectId: 'proj',
+      importAdmin: async () => {
+        const err = new Error("Cannot find package 'firebase-admin'");
+        (err as Error & { code?: string }).code = 'ERR_MODULE_NOT_FOUND';
+        throw err;
+      },
+    });
+    await expect(load()).rejects.toThrow(/AUTH_MODE=firebase but firebase-admin is not installed/);
+    await expect(load()).rejects.toThrow(/optionalDependency/);
   });
 
-  it('rejects a tampered payload', () => {
-    const { consentId } = store.issue();
-    const [encoded, signature] = consentId.split('.');
-    const forged = Buffer.from(JSON.stringify({ v: 1, scopes: ['measurement'], exp: 9999999999 })).toString(
-      'base64url',
+  it('requires a project id even when the SDK is present', async () => {
+    const load = createAdminLoader({ importAdmin: async () => ({ apps: [] }) });
+    await expect(load()).rejects.toThrow(/FIREBASE_PROJECT_ID is not set/);
+  });
+
+  it('initialises once and reuses the app', async () => {
+    const initializeApp = vi.fn();
+    const admin = { apps: [] as unknown[], initializeApp, auth: () => ({}) };
+    const load = createAdminLoader({ projectId: 'proj', importAdmin: async () => admin });
+    await load();
+    await load();
+    expect(initializeApp).toHaveBeenCalledTimes(1);
+    expect(initializeApp).toHaveBeenCalledWith({ projectId: 'proj' });
+  });
+
+  it('is declared as an optional dependency, not a required one', async () => {
+    const pkg = JSON.parse(
+      await import('node:fs/promises').then((fs) =>
+        fs.readFile(new URL('../../../package.json', import.meta.url), 'utf8'),
+      ),
     );
-    expect(() => store.verify(`${forged}.${signature}`)).toThrow(/signature/);
-    expect(encoded).not.toBe(forged);
+    expect(pkg.optionalDependencies['firebase-admin']).toBeTruthy();
+    expect(pkg.dependencies['firebase-admin']).toBeUndefined();
+  });
+});
+
+describe('consent ids: who can get one, and what they can do with it (gap 2)', () => {
+  function service({
+    secrets,
+    currentVersion = 'v1',
+    now = (() => 1_000_000) as () => number,
+  }: { secrets?: { version: string; secret: string }[]; currentVersion?: string; now?: () => number } = {}) {
+    const store = createMemoryStore({ now });
+    const consent = createConsentService({
+      secrets: secrets ?? [{ version: 'v1', secret: SECRET_V1 }],
+      currentVersion,
+      store,
+      now,
+    });
+    return { consent, store };
+  }
+
+  it('requires a session before it will record consent', async () => {
+    const { consent } = service();
+    await expect(consent.grant({ sessionId: 'nope' })).rejects.toThrow(/session is required/);
+    await expect(consent.grant({ sessionId: 'sess_unknown' })).rejects.toThrow(/unknown or has expired/);
+    await expect(consent.grant({})).rejects.toThrow(/session is required/);
   });
 
-  it('rejects a boolean or missing id with a clear message', () => {
-    expect(() => store.verify(true)).toThrow(/boolean is not consent/);
-    expect(() => store.verify(undefined)).toThrow(/consent id is required/);
+  it('binds the id to the session that granted it', async () => {
+    const { consent } = service();
+    const a = await consent.createSession({ ip: '1.1.1.1' });
+    const grant = await consent.grant({ sessionId: a.sessionId });
+    expect(grant.consentId.split('.')).toHaveLength(2);
+    await expect(consent.consume({ consentId: grant.consentId, sessionId: 'sess_somebody_else' })).rejects.toThrow(
+      /different session/,
+    );
   });
 
-  it('rejects an expired id', () => {
+  it('accepts a grant exactly once and reports a replay after that', async () => {
+    const { consent } = service();
+    const s = await consent.createSession({ ip: '1.1.1.1' });
+    const grant = await consent.grant({ sessionId: s.sessionId });
+    await expect(consent.consume({ consentId: grant.consentId, sessionId: s.sessionId })).resolves.toMatchObject({
+      scopes: ['measurement'],
+    });
+    await expect(consent.consume({ consentId: grant.consentId, sessionId: s.sessionId })).rejects.toThrow(
+      /already been used/,
+    );
+  });
+
+  it('expires a grant on its own short clock', async () => {
+    let clock = 1_000_000; // reassigned below to advance time
+    const { consent } = service({ now: () => clock });
+    const s = await consent.createSession({ ip: '1.1.1.1' });
+    const grant = await consent.grant({ sessionId: s.sessionId });
+    clock += 15 * 60 * 1000 + 1;
+    await expect(consent.consume({ consentId: grant.consentId, sessionId: s.sessionId })).rejects.toThrow(/expired/);
+  });
+
+  it('expires the session independently of the grant', async () => {
     let clock = 1_000_000;
-    const timed = createConsentStore({ secret: 'test-secret-value-1234', ttlSeconds: 10, now: () => clock });
-    const { consentId } = timed.issue();
-    clock += 11_000;
-    expect(() => timed.verify(consentId)).toThrow(/expired/);
+    const { consent } = service({ now: () => clock });
+    const s = await consent.createSession({ ip: '1.1.1.1' });
+    clock += 30 * 60 * 1000 + 1;
+    await expect(consent.grant({ sessionId: s.sessionId })).rejects.toThrow(/unknown or has expired/);
   });
 
-  it('refuses to issue consent with no supported scope', () => {
-    const scoped = createConsentStore({ secret: 'test-secret-value-1234' });
-    expect(() => scoped.issue({ scopes: ['marketing'] })).toThrow(/no_valid_scope|at least one of/);
+  it('survives a secret rotation and refuses a retired version', async () => {
+    const clock = 1_000_000;
+    const store = createMemoryStore({ now: () => clock });
+    const v1Only = createConsentService({
+      secrets: [{ version: 'v1', secret: SECRET_V1 }],
+      currentVersion: 'v1',
+      store,
+      now: () => clock,
+    });
+    const s = await v1Only.createSession({ ip: '1.1.1.1' });
+    const oldGrant = await v1Only.grant({ sessionId: s.sessionId });
+
+    // Rotate: v2 signs new ids, v1 still verifies what is inside its TTL.
+    const rotated = createConsentService({
+      secrets: [
+        { version: 'v2', secret: SECRET_V2 },
+        { version: 'v1', secret: SECRET_V1 },
+      ],
+      currentVersion: 'v2',
+      store,
+      now: () => clock,
+    });
+    await expect(rotated.consume({ consentId: oldGrant.consentId, sessionId: s.sessionId })).resolves.toMatchObject({
+      keyVersion: 'v1',
+    });
+    const newGrant = await rotated.grant({ sessionId: s.sessionId });
+    expect(JSON.parse(Buffer.from(newGrant.consentId.split('.')[0], 'base64url').toString()).kv).toBe('v2');
+
+    // Retiring v1 makes the old ids invalid rather than silently valid forever.
+    const retired = createConsentService({
+      secrets: [{ version: 'v2', secret: SECRET_V2 }],
+      currentVersion: 'v2',
+      store,
+      now: () => clock,
+    });
+    const s2 = await retired.createSession({ ip: '1.1.1.1' });
+    const v1Grant = await createConsentService({
+      secrets: [{ version: 'v1', secret: SECRET_V1 }],
+      currentVersion: 'v1',
+      store,
+      now: () => clock,
+    }).grant({ sessionId: s2.sessionId });
+    await expect(retired.consume({ consentId: v1Grant.consentId, sessionId: s2.sessionId })).rejects.toThrow(
+      /no longer accepts/,
+    );
   });
 
-  it('rejects a valid id when the required scope is absent', () => {
-    const scoped = createConsentStore({ secret: 'test-secret-value-1234' });
-    // Measurable scopes today are only 'measurement'; ask for one that is not granted.
-    const { consentId } = scoped.issue({ scopes: ['measurement'] });
-    expect(() => scoped.verify(consentId, 'marketing')).toThrow(/scope/);
+  it('rejects a tampered payload and a truncated id', async () => {
+    const { consent } = service();
+    const s = await consent.createSession({ ip: '1.1.1.1' });
+    const grant = await consent.grant({ sessionId: s.sessionId });
+    const [encoded, signature] = grant.consentId.split('.');
+    const forged = Buffer.from(
+      JSON.stringify({ v: 1, kv: 'v1', sid: s.sessionId, scopes: ['measurement'], exp: 9_999_999_999, jti: 'x' }),
+    ).toString('base64url');
+    await expect(consent.consume({ consentId: `${forged}.${signature}`, sessionId: s.sessionId })).rejects.toThrow(
+      /signature is not valid/,
+    );
+    expect(encoded).not.toBe(forged);
+    await expect(consent.consume({ consentId: 'short', sessionId: s.sessionId })).rejects.toThrow(
+      /boolean is not consent/,
+    );
+    await expect(consent.consume({ consentId: 'y'.repeat(30), sessionId: s.sessionId })).rejects.toThrow(/malformed/);
   });
 
-  it('needs a real secret', () => {
-    expect(() => createConsentStore({ secret: 'short' })).toThrow(/at least 16/);
+  it('refuses scopes it does not issue, and requires the scope on consume', async () => {
+    const { consent } = service();
+    const s = await consent.createSession({ ip: '1.1.1.1' });
+    await expect(consent.grant({ sessionId: s.sessionId, scopes: ['marketing'] })).rejects.toThrow(/at least one of/);
+    const grant = await consent.grant({ sessionId: s.sessionId, scopes: ['measurement'] });
+    await expect(
+      consent.consume({ consentId: grant.consentId, sessionId: s.sessionId, scope: 'marketing' }),
+    ).rejects.toThrow(/scope/);
+  });
+
+  it('needs a signing secret and a version that exists', () => {
+    const store = createMemoryStore();
+    expect(() => createConsentService({ secrets: [], currentVersion: 'v1', store })).toThrow(
+      /at least one signing secret/,
+    );
+    expect(() =>
+      createConsentService({ secrets: [{ version: 'v1', secret: SECRET_V1 }], currentVersion: 'v9', store }),
+    ).toThrow(/not in the secret list/);
+    expect(() => createConsentService({ secrets: [{ version: 'v1', secret: SECRET_V1 }] } as never)).toThrow(
+      /requires a store/,
+    );
   });
 });
 
 describe('request guards', () => {
-  it('caps the body while streaming and stops reading', async () => {
+  it('stops a chunked body at the cap while streaming (gap 4)', async () => {
+    let chunksRead = 0;
     async function* big() {
-      for (let i = 0; i < 10; i++) yield Buffer.alloc(64 * 1024);
+      for (let i = 0; i < 10; i++) {
+        chunksRead += 1;
+        yield Buffer.alloc(64 * 1024);
+      }
     }
     await expect(readJsonBody(big(), { maxBytes: 128 * 1024 })).rejects.toThrow(/exceeds the 131072 byte limit/);
+    // The loop breaks on the offending chunk: it does not buffer all 640 KB first.
+    expect(chunksRead).toBeLessThan(10);
   });
 
   it('parses a JSON object and rejects primitives or bad JSON', async () => {
@@ -160,6 +340,7 @@ describe('request guards', () => {
     await expect(readJsonBody(one('{"a":1}'))).resolves.toEqual({ a: 1 });
     await expect(readJsonBody(one('"just a string"'))).rejects.toThrow(/JSON object/);
     await expect(readJsonBody(one('{oops'))).rejects.toThrow(/not valid JSON/);
+    await expect(readJsonBody(one(''))).resolves.toEqual({});
   });
 
   it('rejects an oversized declared Content-Length before reading', () => {
@@ -175,9 +356,9 @@ describe('request guards', () => {
     expect(limiter.hit('ip1').allowed).toBe(true);
     expect(limiter.hit('ip1').allowed).toBe(true);
     expect(() => limiter.hit('ip1')).toThrow(/Too many requests/);
-    expect(limiter.hit('ip2').allowed).toBe(true); // separate bucket
+    expect(limiter.hit('ip2').allowed).toBe(true);
     clock = 1001;
-    expect(limiter.hit('ip1').allowed).toBe(true); // window rolled over
+    expect(limiter.hit('ip1').allowed).toBe(true);
   });
 
   it('refuses a cross-origin call when an allowlist exists', () => {
@@ -194,14 +375,59 @@ describe('request guards', () => {
     expect(() => assertOrigin({}, ['https://app.test'], { requireOrigin: true })).toThrow(/requires an Origin/);
   });
 
-  it('derives the client ip from X-Forwarded-For', () => {
-    expect(clientIp({ 'x-forwarded-for': '203.0.113.9, 10.0.0.1' })).toBe('203.0.113.9');
-    expect(clientIp({}, '10.0.0.5')).toBe('10.0.0.5');
-    expect(clientIp({})).toBe('unknown');
-  });
-
   it('parses a comma-separated allowlist', () => {
     expect(parseAllowlist(' https://a.test , https://b.test ,')).toEqual(['https://a.test', 'https://b.test']);
+  });
+});
+
+describe('client ip and TRUST_PROXY (gap 3)', () => {
+  it('ignores X-Forwarded-For entirely when no proxy is trusted', () => {
+    // The default. A client that sets its own header must not become "1.2.3.4".
+    expect(clientIp({ 'x-forwarded-for': '1.2.3.4' }, '10.0.0.7')).toBe('10.0.0.7');
+    expect(clientIp({ 'x-forwarded-for': '1.2.3.4' }, '10.0.0.7', { trustProxy: 0 })).toBe('10.0.0.7');
+  });
+
+  it('takes the rightmost hop with one trusted proxy', () => {
+    // "spoofed" is what the attacker prepended; the real client is last.
+    expect(clientIp({ 'x-forwarded-for': '1.2.3.4, 203.0.113.9' }, '10.0.0.7', { trustProxy: 1 })).toBe('203.0.113.9');
+    // A single entry is both first and last.
+    expect(clientIp({ 'x-forwarded-for': '203.0.113.9' }, '10.0.0.7', { trustProxy: 1 })).toBe('203.0.113.9');
+  });
+
+  it('walks in past each trusted hop', () => {
+    const headers = { 'x-forwarded-for': 'spoofed, 198.51.100.4, 10.1.1.1' };
+    expect(clientIp(headers, '10.0.0.7', { trustProxy: 1 })).toBe('10.1.1.1'); // our edge, not the client
+    expect(clientIp(headers, '10.0.0.7', { trustProxy: 2 })).toBe('198.51.100.4'); // the real client
+  });
+
+  it('clamps instead of trusting more hops than the header can satisfy', () => {
+    // Only two entries: asking for five trusted hops cannot invent addresses, so
+    // the leftmost entry wins rather than a proxy address.
+    const headers = { 'x-forwarded-for': 'spoofed, 10.1.1.1' };
+    expect(clientIp(headers, '10.0.0.7', { trustProxy: 5 })).toBe('spoofed');
+    expect(clientIp(headers, '10.0.0.7', { trustProxy: 2 })).toBe('spoofed');
+  });
+
+  it('falls back to the socket when the header is empty or malformed', () => {
+    expect(clientIp({ 'x-forwarded-for': '' }, '10.0.0.7', { trustProxy: 1 })).toBe('10.0.0.7');
+    expect(clientIp({ 'x-forwarded-for': ' , , ' }, '10.0.0.7', { trustProxy: 1 })).toBe('10.0.0.7');
+    expect(clientIp({}, '10.0.0.7', { trustProxy: 3 })).toBe('10.0.0.7');
+    expect(clientIp({ 'x-forwarded-for': '1.2.3.4' }, undefined, { trustProxy: 1 })).toBe('1.2.3.4');
+    expect(clientIp({})).toBe('unknown');
+    // A hostile trustProxy value cannot widen trust.
+    expect(clientIp({ 'x-forwarded-for': '1.2.3.4' }, '10.0.0.7', { trustProxy: -4 })).toBe('10.0.0.7');
+  });
+
+  it('gives a spoofing client its own rate-limit bucket, not the victim address bucket', () => {
+    // With one trusted proxy, the attacker cannot pick the bucket by setting XFF.
+    const limiter = createRateLimiter({ limit: 1, windowMs: 60_000, now: () => 0 });
+    const attackerHeaders = { 'x-forwarded-for': '203.0.113.9, 198.51.100.4' };
+    const attackerIp = clientIp(attackerHeaders, '10.0.0.7', { trustProxy: 1 });
+    limiter.hit(`track:${attackerIp}`);
+    // Same presented header again: still one bucket, so the second call is limited.
+    const again = clientIp(attackerHeaders, '10.0.0.7', { trustProxy: 1 });
+    expect(again).toBe(attackerIp);
+    expect(() => limiter.hit(`track:${again}`)).toThrow(/Too many requests/);
   });
 });
 
@@ -214,11 +440,13 @@ describe('/api/health', () => {
     expect(JSON.stringify(res.body)).not.toContain('ads_key_value');
   });
 
-  it('gives an authenticated caller the full detail', async () => {
+  it('gives an authenticated caller the full detail, including storage and role', async () => {
     const { app } = makeApp();
     const res = await app.handle({ method: 'GET', path: '/api/health', headers: authed() });
     expect(res.body.mode).toBe('demo');
     expect(res.body.configuration.adsKey).toBe(true);
+    expect(res.body.storage).toEqual({ kind: 'memory', ok: true });
+    expect(res.body.auth).toEqual({ mode: 'dev', role: 'owner' });
     expect(JSON.stringify(res.body)).not.toContain('ads_key_value');
   });
 
@@ -245,6 +473,7 @@ describe('authentication on protected routes', () => {
     ['GET', '/api/dataset'],
     ['POST', '/api/adgroups/adgrp_1/hints'],
     ['GET', '/api/adgroups'],
+    ['GET', '/api/audit'],
   ];
 
   it.each(protectedRoutes)('%s %s rejects a missing token with 401', async (method, path) => {
@@ -263,8 +492,7 @@ describe('authentication on protected routes', () => {
 
   it('rejects an unauthenticated push before any upstream call', async () => {
     const fetchImpl = vi.fn();
-    const auth = createAuth({ mode: 'dev', devToken: DEV_TOKEN });
-    const { app } = makeApp({ auth, env: { adsKey: 'k', pixelId: 'p', fetchImpl } });
+    const { app } = makeApp({ env: { adsKey: 'k', pixelId: 'p', fetchImpl } });
     const res = await app.handle({
       method: 'POST',
       path: '/api/adgroups/adgrp_1/hints',
@@ -292,7 +520,7 @@ describe('authentication on protected routes', () => {
     }
   });
 
-  it('an admin may push, and the upstream call is attempted exactly once', async () => {
+  it('an admin may push, the upstream call happens once, and the history is stored server-side', async () => {
     let stored: string[] = [];
     const fetchImpl = vi.fn(async (_url: string, init?: { method?: string; body?: string }) => ({
       ok: true,
@@ -303,7 +531,7 @@ describe('authentication on protected routes', () => {
       },
     }));
     const auth = createAuth({ mode: 'dev', devToken: DEV_TOKEN, devRole: 'admin' });
-    const { app } = makeApp({ auth, env: { adsKey: 'k', pixelId: 'p', fetchImpl } });
+    const { app, store } = makeApp({ auth, env: { adsKey: 'k', pixelId: 'p', fetchImpl } });
     const res = await app.handle({
       method: 'POST',
       path: '/api/adgroups/adgrp_1/hints',
@@ -313,6 +541,36 @@ describe('authentication on protected routes', () => {
     expect(res.status).toBe(200);
     expect(fetchImpl).toHaveBeenCalledTimes(3); // read, write, read back
     expect(res.body.pushedHints).toEqual(['a hint']);
+
+    const entries = await store.audit.list({ adGroupId: 'adgrp_1' });
+    expect(entries).toHaveLength(1);
+    expect(entries[0]).toMatchObject({ action: 'push', actor: 'dev-user', actorRole: 'admin', after: ['a hint'] });
+  });
+
+  it('exposes the stored history through GET /api/audit (gap 8)', async () => {
+    let stored: string[] = ['old'];
+    const fetchImpl = vi.fn(async (_url: string, init?: { method?: string; body?: string }) => ({
+      ok: true,
+      status: 200,
+      json: async () => {
+        if (init?.method === 'POST') stored = JSON.parse(String(init.body)).context_hints;
+        return { id: 'g1', context_hints: stored };
+      },
+    }));
+    const { app } = makeApp({ env: { adsKey: 'k', pixelId: 'p', fetchImpl } });
+    await app.handle({ method: 'POST', path: '/api/adgroups/g1/hints', headers: authed(), body: { hints: ['new'] } });
+
+    const res = await app.handle({
+      method: 'GET',
+      path: '/api/audit',
+      headers: authed(),
+      query: { adGroupId: 'g1', limit: '10' },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.entries).toHaveLength(1);
+    expect(res.body.entries[0].before).toEqual(['old']);
+    expect(res.body.entries[0].after).toEqual(['new']);
+    expect(res.body.actor).toBe('dev-user');
   });
 
   it('sets a role on the dev session from config, and only in dev mode', async () => {
@@ -334,27 +592,74 @@ describe('/api/track guards', () => {
     eventName: 'lead_created',
     eventId: 'evt_1',
     sourceUrl: 'https://app.test/thanks',
-    consentId: '',
   };
 
   function appWithTrack(fetchImpl = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }))) {
     const built = makeApp({
       env: { adsKey: 'k', capiKey: 'c', pixelId: 'p', trackOrigins: ['https://app.test'], fetchImpl },
     });
-    const consentId = built.consent.issue().consentId;
-    return { ...built, consentId, fetchImpl };
+    return { ...built, fetchImpl };
   }
 
-  it('is reachable without a token (it is the public write path)', async () => {
-    const { app, consentId, fetchImpl } = appWithTrack();
+  it('accepts a first-party event after a real session + consent handshake', async () => {
+    const { app, fetchImpl } = appWithTrack();
+    const { sessionId, consentId } = await handshake(app);
     const res = await app.handle({
       method: 'POST',
       path: '/api/track',
       headers: { origin: 'https://app.test' },
-      body: { ...event, consentId },
+      body: { ...event, sessionId, consentId },
     });
     expect(res.status).toBe(202);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(res.body.consent.consumedAt).toBeTruthy();
+  });
+
+  it('rejects a replay of the same consent id (gap 2)', async () => {
+    const { app, fetchImpl } = appWithTrack();
+    const { sessionId, consentId } = await handshake(app);
+    const headers = { origin: 'https://app.test' };
+    expect(
+      (await app.handle({ method: 'POST', path: '/api/track', headers, body: { ...event, sessionId, consentId } }))
+        .status,
+    ).toBe(202);
+    const replay = await app.handle({
+      method: 'POST',
+      path: '/api/track',
+      headers,
+      body: { ...event, sessionId, consentId },
+    });
+    expect(replay.status).toBe(403);
+    expect(replay.body.error.code).toBe('consent_replayed');
+    expect(fetchImpl).toHaveBeenCalledTimes(1); // the replay never reached upstream
+  });
+
+  it('rejects a consent id presented with a different session id (gap 2)', async () => {
+    const { app, fetchImpl } = appWithTrack();
+    const { consentId } = await handshake(app);
+    const other = await handshake(app);
+    const res = await app.handle({
+      method: 'POST',
+      path: '/api/track',
+      headers: { origin: 'https://app.test' },
+      body: { ...event, sessionId: other.sessionId, consentId },
+    });
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('consent_session_mismatch');
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('rejects an event with no session at all', async () => {
+    const { app, fetchImpl } = appWithTrack();
+    const res = await app.handle({
+      method: 'POST',
+      path: '/api/track',
+      headers: { origin: 'https://app.test' },
+      body: { ...event },
+    });
+    expect(res.status).toBe(403);
+    expect(res.body.error.code).toBe('session_required');
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('rejects the old boolean consent and never calls upstream', async () => {
@@ -372,11 +677,12 @@ describe('/api/track guards', () => {
 
   it('rejects a forged consent id', async () => {
     const { app, fetchImpl } = appWithTrack();
+    const { sessionId } = await handshake(app);
     const res = await app.handle({
       method: 'POST',
       path: '/api/track',
       headers: { origin: 'https://app.test' },
-      body: { ...event, consentId: 'Zm9yZ2Vk.signature' },
+      body: { ...event, sessionId, consentId: 'Zm9yZ2Vk.signature' },
     });
     expect(res.status).toBe(403);
     expect(fetchImpl).not.toHaveBeenCalled();
@@ -395,7 +701,7 @@ describe('/api/track guards', () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
-  it('rate limits per IP', async () => {
+  it('rate limits per IP, so one visitor cannot exhaust another', async () => {
     const built = makeApp({
       env: {
         adsKey: 'k',
@@ -404,42 +710,49 @@ describe('/api/track guards', () => {
         trackOrigins: ['https://app.test'],
         fetchImpl: vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) })),
       },
-      rateLimit: createRateLimiter({ limit: 2 }),
+      rateLimit: createRateLimiter({ limit: 1, now: () => 0 }),
     });
-    const consentId = built.consent.issue().consentId;
     const call = (ip: string) =>
       built.app.handle({
         method: 'POST',
         path: '/api/track',
         headers: { origin: 'https://app.test' },
         ip,
-        body: { ...event, consentId },
+        body: { ...event },
       });
-    expect((await call('1.1.1.1')).status).toBe(202);
-    expect((await call('1.1.1.1')).status).toBe(202);
-    const third = await call('1.1.1.1');
-    expect(third.status).toBe(429);
-    expect(third.body.error.code).toBe('rate_limited');
-    expect((await call('2.2.2.2')).status).toBe(202);
+    // First call spends the single token in that address's bucket (403: no session).
+    expect((await call('1.1.1.1')).body.error.code).toBe('session_required');
+    // Second call from the same address is limited before any work happens.
+    const limited = await call('1.1.1.1');
+    expect(limited.status).toBe(429);
+    expect(limited.body.error.code).toBe('rate_limited');
+    // A different visitor still has their own bucket: the limit is per IP.
+    expect((await call('2.2.2.2')).body.error.code).toBe('session_required');
   });
 
-  it('records consent and then accepts events that use the returned id', async () => {
+  it('records consent only for an existing session, and never for granted:false', async () => {
     const { app } = appWithTrack();
-    const recorded = await app.handle({
+    const headers = { origin: 'https://app.test' };
+    const session = await app.handle({ method: 'POST', path: '/api/session', headers, ip: '1.1.1.1' });
+    expect(session.status).toBe(201);
+    expect(session.body.expiresAt).toBeTruthy();
+
+    const granted = await app.handle({
       method: 'POST',
       path: '/api/consent',
-      headers: { origin: 'https://app.test' },
-      body: { granted: true },
+      headers,
+      body: { granted: true, sessionId: session.body.sessionId },
     });
-    expect(recorded.status).toBe(201);
-    expect(recorded.body.consentId).toBeTruthy();
-  });
+    expect(granted.status).toBe(201);
+    expect(granted.body.consentId).toBeTruthy();
 
-  it('refuses to record consent that was not actually granted', async () => {
-    const { app } = appWithTrack();
-    const res = await app.handle({ method: 'POST', path: '/api/consent', headers: {}, body: { granted: false } });
-    expect(res.status).toBe(400);
-    expect(res.body.error.code).toBe('consent_not_granted');
+    const refused = await app.handle({ method: 'POST', path: '/api/consent', headers, body: { granted: false } });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error.code).toBe('consent_not_granted');
+
+    const noSession = await app.handle({ method: 'POST', path: '/api/consent', headers, body: { granted: true } });
+    expect(noSession.status).toBe(403);
+    expect(noSession.body.error.code).toBe('session_required');
   });
 });
 

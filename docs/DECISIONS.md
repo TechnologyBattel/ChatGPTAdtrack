@@ -20,7 +20,18 @@
 - 2026-10-24: Failed pushes and failed undos are audited too. An audit trail that records only successes hides the incidents you need later.
 - 2026-10-24: Auth is a server concern only. `AUTH_MODE=dev` uses a shared token and is refused under `NODE_ENV=production`; production must set `AUTH_MODE=firebase`. An unknown mode fails startup.
 - 2026-10-24: Writes require `admin` or `owner`. `analyst` and `viewer` can read everything and change nothing. The check happens before any upstream call.
-- 2026-10-24: A boolean is not consent. `/api/track` requires an HMAC-signed consent id (scoped, expiring) issued by `/api/consent`; verification is stateless so the demo needs no database.
+- 2026-10-24: A boolean is not consent. `/api/track` requires an HMAC-signed consent id (scoped, expiring) issued by `/api/consent`.
 - 2026-10-24: `/api/health` is public but shallow (`{ok, mode}`). Key presence, account identity and upstream error text require a token.
 - 2026-10-24: The one public write path (`/api/track`) carries the most guards: consent id, origin allowlist, per-IP rate limit, body cap. Rate limiting is in-memory and therefore per instance; a shared store is a production follow-up.
 - 2026-10-24: Routing lives in `server/app.mjs` with no transport, so every rule is unit-testable without a socket.
+- 2026-10-25: Consent ids are session-bound, single use and short lived (15 min; sessions 30 min). Verification is no longer stateless: the grant is persisted so a replay or cross-session use can be refused. Who can obtain an id, and why that is safe, is in docs/SECURITY.md §3.
+- 2026-10-25: Signing keys are versioned (`CONSENT_SECRETS=v2:…,v1:…`). Rotation signs with the new key and still verifies the old one until those ids expire, so no visitor is asked twice for consent during a deploy.
+- 2026-10-25: `AUTH_MODE=dev` refuses to start when any ad account key is set. Dev auth mints a write-capable token for anyone who can reach it; pairing that with a live account is an unauthenticated write path, so it is a startup error rather than a warning.
+- 2026-10-25: `X-Forwarded-For` is believed only when `TRUST_PROXY` states how many of our own proxies are in front, and the client is read from the right. The header is attacker-controlled on the left, and the derived address is what the rate limiter keys on.
+- 2026-10-25: The body cap is enforced while streaming, not from `Content-Length`, so a chunked body cannot bypass it.
+- 2026-10-25: The auth token lives in `sessionStorage` with a memory fallback — never `localStorage`, and no cookies (no CSRF machinery means a cookie would be a net loss). The CSP forbids inline script in production; `index.html` ships none.
+- 2026-10-25: `firebase-admin` is an `optionalDependency`, imported lazily only when `AUTH_MODE=firebase`. A missing module is a clear startup error, not a stack trace, and the demo/tests never load it.
+- 2026-10-25: Sessions, consent records and push history sit behind one storage interface with memory and Firestore implementations. `consume` is compare-and-set inside a Firestore transaction, so concurrent replays cannot both win. `STORAGE=memory` is refused in production.
+- 2026-10-25: Push history is server-side (`GET /api/audit`). The browser copy in `localStorage` is only a cache for the signed-out demo.
+- 2026-10-25: Roles are set with `scripts/set-role.mjs`, never from the app. A role-editing route would let an admin promote themselves; the claim is written with service-account credentials and refresh tokens are revoked so a stale token cannot linger.
+- 2026-10-25: The login screen is a full-screen overlay on the single page, not a route. Firebase sign-in goes over the public REST API instead of the ~150 KB Web SDK.

@@ -77,3 +77,11 @@ event it receives. Therefore:
   shape; no SDK is loaded).
 - Persisting event ids with domain records (needed for retry safety).
 - A delivery health view (`/health/events`) for deduped, failed and retried events.
+
+## Consent handshake
+
+Consent is required before any event and before any Pixel cookie is written. The
+sequence is `POST /api/session` → `POST /api/consent` → `POST /api/track`; the consent id
+is single use and lives 15 minutes, and a replay or cross-session use is refused. See
+[SECURITY.md §3](SECURITY.md) for who can obtain an id and what bounds the abuse, and
+[API.md](API.md) for the request and response shapes.

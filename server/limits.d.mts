@@ -18,7 +18,11 @@ export declare function createRateLimiter(opts?: {
   windowMs?: number;
   now?: () => number;
 }): RateLimiter;
-export declare function clientIp(headers?: Record<string, string | undefined>, socketAddress?: string): string;
+export declare function clientIp(
+  headers?: Record<string, string | undefined>,
+  socketAddress?: string,
+  opts?: { trustProxy?: number },
+): string;
 export declare function assertOrigin(
   headers?: Record<string, string | undefined>,
   allowlist?: string[],

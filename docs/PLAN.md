@@ -384,22 +384,23 @@ browser (React, single page)
 ```
 
 `server/app.mjs` is deliberately transport-free: `handle({method, path, headers, ip, body})`
-returns `{status, body}`. That is why 47 security assertions run in under a second with
-no server, no network and no keys.
+returns `{status, body}`. That is why the security assertions run in under a second with
+no server, no network and no keys. Transport rules (body cap, client IP, headers) live in
+`server/handler.mjs` and are tested over a real socket in `transport.test.ts`.
 
 ### Deviations from the original plan
 
 | Planned | Built | Why |
 |---|---|---|
 | Cloud Functions | One Node HTTP server in a container | Fewer moving parts while there is one client; the handlers are pure and port to Functions later. |
-| Firestore | No database yet | Nothing needs persistence to prove the flow; consent and audit are stateless/local, and both are flagged as gaps. |
-| Firebase Auth from day one | Server-side gate first | The expensive mistake is an unprotected write path, not a missing login screen. |
+| Firestore | A storage interface with memory and Firestore implementations | Consent replay protection must be persistable, but the demo must still run with no database. `STORAGE=memory` is refused in production. |
+| Firebase Auth from day one | Server-side gate first, login overlay after | The expensive mistake is an unprotected write path, not a missing login screen. Roles are set by `scripts/set-role.mjs`, never from the app. |
 | "Slice 1 complete before slice 2" | Slices 2–5 built first | The user-facing question was the point of the product; auth and hardening landed right after. |
 
 ## 9. Recommended next action
 
 1. **Connect a real ad account** and replace the stub with reality — everything else is guessing until the payloads round-trip.
-2. **Persist consent records and the audit log** (Firestore), because both are currently in memory or in the browser.
+2. **Point `STORAGE=firestore` at a real database** and confirm the adapter against the emulator; the interface and the transaction path exist, but no Firestore was contacted.
 3. **Install the Pixel + consent gate in the browser**, so `firstPartyAvailable` can become true and CAC/ROAS stop being em dashes.
 4. **Build the retention/deletion jobs** before any real personal data lands.
 5. Only then: hint-set experiments, alerts, and a shared rate-limit store.

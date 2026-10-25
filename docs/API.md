@@ -30,6 +30,9 @@ scripts and notes keep working.
 | `GET /api/dataset` | token | — |
 | `GET /api/adgroups` | token | — |
 | `POST /api/adgroups/:id/hints` | token, **admin or owner** | Reversible, audited |
+| `GET /api/audit` | token | Push history from the server store |
+| `POST /api/session` | none (origin allowlist + rate limit) | Starts the consent handshake |
+| `POST /api/consent` | session id | Records the grant, returns a single-use id |
 | `POST /api/dev/session` | none | Dev mode only; 404 in production |
 
 Auth is pluggable:
@@ -40,10 +43,12 @@ createAuth({ mode: 'firebase', verifyToken })             // Firebase ID tokens
 createAuth({ mode: 'firebase', verifyToken: fakeVerifier })// tests, no network
 ```
 
-`AUTH_MODE=firebase` uses `firebase-admin` (lazily imported) to verify the ID token,
-including revocation, and reads the role from the `role` custom claim. An unknown or
-missing role becomes `viewer`, never a write role. Production refuses to start with
-`AUTH_MODE=dev` or with no `AUTH_MODE` at all.
+`AUTH_MODE=firebase` uses `firebase-admin` (an **optionalDependency**, imported lazily)
+to verify the ID token, including revocation, and reads the role from the `role` custom
+claim. An unknown or missing role becomes `viewer`, never a write role. Production refuses
+to start with `AUTH_MODE=dev` or with no `AUTH_MODE` at all, and `AUTH_MODE=dev` refuses to
+start at all when any ad account key is set. Roles, first-admin bootstrap, token storage
+and the CSP live in [SECURITY.md](SECURITY.md).
 
 Writes are gated **before** any upstream call: an unauthenticated or under-privileged
 push returns 401/403 and the OpenAI API is never contacted. Both the unit tests and
@@ -96,23 +101,33 @@ Live mapping rules:
 - `conversionsNative` includes 1-day view-through; `viewThrough` is kept separately
   so the native/internal comparison stays legible.
 
+### `POST /api/session`
+
+Step 1 of two. Returns a short-lived session id bound to the caller's IP and user agent
+(30 minutes by default). Required before any consent can be recorded.
+
+```json
+{ "sessionId": "sess_…", "expiresAt": "2026-10-25T06:45:00.000Z", "ttlSeconds": 1800 }
+```
+
 ### `POST /api/consent`
 
-Records a grant and returns a signed id. The browser must call this *before* any
-event, and store the id with the session.
+Step 2. Records a grant against a session and returns a signed, **single-use** id.
 
 ```json
-{ "granted": true, "scopes": ["measurement"], "subjectHash": "optional" }
+{ "granted": true, "sessionId": "sess_…", "scopes": ["measurement"], "subjectHash": "optional" }
 ```
 
 ```json
-{ "consentId": "eyJ2Ijox….Xk3…", "scopes": ["measurement"], "expiresAt": "2027-04-22T…" }
+{ "consentId": "eyJ2Ijox….Xk3…", "scopes": ["measurement"], "expiresAt": "2026-10-25T06:30:00.000Z", "ttlSeconds": 900 }
 ```
 
-Refuses `granted: false` with `400 consent_not_granted`, and refuses a request with no
-supported scope. The id is an HMAC-SHA256 signature over a base64url payload
-(`{v, jti, scopes, sub, iat, exp}`); verification is stateless, so no database is
-needed to demo it. **Production still needs to persist the grant** for the audit trail.
+Refuses `granted: false` with `400 consent_not_granted`, a missing session with
+`403 session_required`, and a request with no supported scope with `400 no_valid_scope`.
+The id is an HMAC-SHA256 signature over a base64url payload
+(`{v, kv, sid, scopes, sub, iat, exp, jti}`), recorded in the store so the first
+`/api/track` can burn it. Who can obtain one, and what stops abuse, is in
+[SECURITY.md §3](SECURITY.md).
 
 ### `POST /api/track`
 
@@ -124,6 +139,7 @@ Server-side event intake. The Pixel's browser copy and this call must share
   "eventName": "lead_created",
   "eventId": "evt_9f3c",
   "sourceUrl": "https://shop.example.com/thanks",
+  "sessionId": "sess_…",
   "consentId": "eyJ2Ijox….Xk3…",
   "oppref": "gAAAA…",
   "obref": "8f1c…",
@@ -133,16 +149,17 @@ Server-side event intake. The Pixel's browser copy and this call must share
 ```
 
 `consent: true` is **rejected**: a boolean is not consent, because the client can
-always send `true`. Send the signed id instead.
+always send `true`. Send a bootstrapped session and a server-issued, single-use id:
 
 Rules enforced server-side, not trusted from the client:
 
 | Check | Failure |
 |---|---|
-| A server-issued consent id, valid signature, unexpired, right scope | `403 consent_required` / `consent_invalid` / `consent_expired` / `consent_scope_missing` |
+| An existing session | `403 session_required` / `session_invalid` |
+| Consent id signature, scope, lifetime, session binding, not already used | `403 consent_required` / `consent_invalid` / `consent_expired` / `consent_scope_missing` / `consent_session_mismatch` / `consent_replayed` |
 | Origin in `TRACK_ORIGINS` | `403 origin_not_allowed` |
 | Per-IP rate limit (`RATE_LIMIT_PER_MINUTE`, default 60/min) | `429 rate_limited` |
-| Body under `MAX_BODY_BYTES` (default 256 KB) | `413 payload_too_large` |
+| Body under `MAX_BODY_BYTES` (default 256 KB), enforced while streaming | `413 payload_too_large` |
 | `eventId` present | `400 missing_event_id` |
 | event name in the supported list | `400 unsupported_event` |
 | `amount` always has a currency | `400 missing_currency` |
@@ -185,8 +202,8 @@ The API is stateless, so it deploys as a container:
 gcloud run deploy adtrack-api \
   --source . \
   --region asia-south1 \
-  --set-secrets OPENAI_ADS_API_KEY=ads-key:latest,OPENAI_CONVERSIONS_API_KEY=capi-key:latest,OPENAI_PIXEL_ID=pixel-id:latest,CONSENT_SECRET=consent-secret:latest \
-  --set-env-vars AUTH_MODE=firebase,FIREBASE_PROJECT_ID=your-project,TRACK_ORIGINS=https://app.example.com \
+  --set-secrets OPENAI_ADS_API_KEY=ads-key:latest,OPENAI_CONVERSIONS_API_KEY=capi-key:latest,OPENAI_PIXEL_ID=pixel-id:latest,CONSENT_SECRETS=consent-secrets:latest \
+  --set-env-vars AUTH_MODE=firebase,FIREBASE_PROJECT_ID=your-project,STORAGE=firestore,TRUST_PROXY=1,TRACK_ORIGINS=https://app.example.com \
   --allow-unauthenticated
 ```
 
@@ -221,7 +238,8 @@ handlers in `server/core.mjs` are already pure and env-injected so they port as-
 | Handler units | `src/lib/__tests__/server.test.ts` | fake `fetch`: auth, mapping, consent gate, retries, push guards |
 | Component | `src/lib/__tests__/push.test.tsx` | demo-mode disabled state, diff modal, confirm gate, undo, verbatim errors, audit log |
 | Server smoke | `scripts/check-server.mjs` | boots the real server in demo mode; auth, consent, origin, size limits, no key echoed |
-| Production guards | `scripts/check-prod-guards.mjs` | refuses to start with dev auth in production, no `AUTH_MODE`, no `CONSENT_SECRET`, or an unknown mode |
+| Production guards | `scripts/check-prod-guards.mjs` | refuses to start with dev auth in production, dev auth plus ad account keys, no `AUTH_MODE`, no `CONSENT_SECRETS`, `STORAGE=memory`, no `TRACK_ORIGINS`, a bad `TRUST_PROXY`, or an unknown mode |
+| Transport rules | `src/lib/__tests__/transport.test.ts` | streaming body cap, spoofed `X-Forwarded-For`, API headers — over a real socket |
 | End-to-end | `scripts/e2e-push.mjs` | real HTTP server against a **stub** of api.ads.openai.com: live health, minor-unit mapping, push → previous set, local guard rails, undo, 403 pass-through, no key leakage |
 
 All four run in `npm run verify`. `ADS_API_BASE` / `EVENTS_API_BASE` exist only for

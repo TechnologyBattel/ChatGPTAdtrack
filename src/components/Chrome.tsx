@@ -19,11 +19,14 @@ export function Header({
   onHome,
   compact,
   source = 'demo',
+  authSlot,
 }: {
   children?: ReactNode;
   onHome: () => void;
   compact: boolean;
   source?: 'demo' | 'live';
+  /** Sign-in / account control. An overlay opener, never a route. */
+  authSlot?: ReactNode;
 }) {
   return (
     <header
@@ -36,6 +39,7 @@ export function Header({
           <Wordmark size="sm" />
         </button>
         <div className="min-w-0 flex-1">{children}</div>
+        {authSlot}
         <a
           href="https://developers.openai.com/ads"
           target="_blank"
