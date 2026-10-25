@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-white text-ink;
+  }
+  ::selection {
+    background: #d2e3fc;
+  }
+  input[type='search']::-webkit-search-cancel-button,
+  input[type='search']::-webkit-search-decoration {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+  :focus-visible {
+    outline: 2px solid #1a73e8;
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .link {
+    @apply text-brand hover:underline underline-offset-2;
+  }
+  .chip {
+    @apply rounded-full border border-line bg-white px-3 py-1.5 text-[13px] text-muted transition hover:border-[#c6c6c6] hover:shadow-sm active:shadow-none;
+  }
+  .num {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Print / save-as-PDF: an answer should leave the browser as cleanly as it arrived. */
+@media print {
+  @page {
+    margin: 14mm;
+    size: A4;
+  }
+  html,
+  body {
+    background: #fff !important;
+  }
+  header {
+    position: static !important;
+    border-bottom: 1px solid #dadce0 !important;
+  }
+  article {
+    padding-bottom: 0 !important;
+  }
+  figure,
+  table,
+  .rounded-xl {
+    break-inside: avoid;
+  }
+  a[href^='http']::after {
+    content: '';
+  }
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}
