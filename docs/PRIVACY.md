@@ -46,10 +46,14 @@ conversation content, special-category data.
 
 | Data | Retention | Enforcement |
 |---|---|---|
-| Raw events | 13 months | Scheduled job, with a dry-run report before each purge |
-| Lead and order records | 25 months | Same job |
-| Aggregates | Indefinite | Already anonymised |
-| Audit log (push/undo) | 13 months, or the life of the ad group | `GET /api/audit` from the store; in-memory cap of 500 entries in dev, Firestore in production |
+| Raw events | 396 days (13 months) | Application sweep every `RETENTION_SWEEP_INTERVAL_MS` (default 6 h), plus an owner-only manual purge that returns per-collection counts |
+| Lead and order records | 760 days (25 months) | Same sweep |
+| Research topics | Kept (not personal data) | `topics: null` in the policy |
+| Audit log (tenancy + push/undo) | 396 days | Same sweep; in-memory cap of 500 entries in dev, Firestore in production |
+
+The purge deletes exactly what the policy lists, per organization, and writes a
+`retention.purge` audit entry with the counts. There is **no undo**, so the manual
+endpoint is owner-only. Changing a day count deletes data on the next sweep.
 
 ## Deletion and export (decided)
 
@@ -61,13 +65,16 @@ conversation content, special-category data.
 
 | Role | Can see | Can change |
 |---|---|---|
-| viewer | Reports | Nothing |
-| analyst | Reports | Nothing (no ad-account writes) |
-| admin | Reports | Push/undo hint sets |
-| owner | Everything | Everything, including roles |
+| viewer | Reports, topics, campaigns, leads | Nothing |
+| analyst | The same, plus exports | Nothing (no ad-account writes) |
+| editor | The same | Campaigns, research topics, lead qualification |
+| admin | Everything except ownership transfer | Also workspaces, members, source credentials, ad-account pushes |
+| owner | Everything | Everything, including workspace deletion and the retention purge |
 
-The API enforces this server-side: `POST /api/adgroups/:id/hints` requires `admin`
-or `owner`, and refuses before any upstream call.
+The API enforces this server-side with thirteen named permissions
+([AGENCY_MODEL.md §2](AGENCY_MODEL.md)); `POST /api/adgroups/:id/hints` requires
+`adaccount.push` (admin/owner) and refuses before any upstream call. Data is scoped to
+an organization: a non-member gets `404`, identical to a nonexistent id.
 
 ## Subprocessors
 
@@ -86,9 +93,14 @@ or `owner`, and refuses before any upstream call.
 
 ## Known gaps before launch
 
-- Consent records are persisted, but the retention job that expires them is specified,
-  not built (Firestore TTL covers sessions and consent ids; audit/outbox need a job).
-- The first-party ingest key is per deployment, not per sender: every sender shares it.
+- Retention is implemented as an application sweep and a manual purge; Firestore TTL
+  policies for sessions and consent ids are documented but not enabled by this repo.
+- Ingest keys are per **source connection**, rotatable and revocable; the older
+  deployment-wide key path (`schema_version: 1`) still exists for page events only.
+- Self-serve deletion and export at `/privacy` are **not built**. Deletion today is a
+  workspace delete or an owner-run purge, both of which are all-or-nothing and audited.
 - `TRACK_ORIGINS` must be set in production or cross-origin tracking is refused (by design).
-- The retention job is specified, not built.
-- A DPA with OpenAI and a records-of-processing register are outstanding.
+- City-level data is only stored when `consent_state` is `granted`; country/region
+  reporting works without it.
+- A DPA with OpenAI, a records-of-processing register, and a DPIA for the retention
+  numbers are outstanding. The day counts here are a product policy, not a legal opinion.
