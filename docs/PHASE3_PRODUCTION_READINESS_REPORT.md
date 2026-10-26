@@ -3,6 +3,12 @@
 **Product:** AI Ads Tracker (agency-first ad tracking + guided research + read-only HubSpot CRM connector)
 **Branch:** `arena/b0e01b66-chatgptadtrack` · **Baseline commit:** `ac153e5` · **Hardening commit:** `e00bb95` (+ `docs/PHASE3_PRODUCTION_READINESS_REPORT.md`)
 **Date:** 2026-10-26 · **Role assumed:** Staff/Principal release owner
+> **Superseded in part by Phase 4** (`docs/PHASE4_STAGING_VALIDATION_REPORT.md`).
+> Two items recorded here as UNKNOWN were subsequently executed in GitHub Actions: the
+> container is built and smoke-tested, and the browser suite runs. The browser suite in fact
+> **failed** on this commit's CI run — the Phase 4 report records that failure, its two root
+> causes, and the fix. The decision below stands for production release.
+
 **Decision:** **BLOCKED** for production release. Suitable for **internal staging/demo only, with no client data**, until the three blocked gates below clear.
 
 ---
