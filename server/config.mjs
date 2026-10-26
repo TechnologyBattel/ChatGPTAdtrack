@@ -5,6 +5,8 @@
 // misconfigured server must never start and then discover the problem at request
 // time.
 
+import { parseEncryptionKey } from './connectors/crypto.mjs';
+
 export class ConfigError extends Error {
   constructor(message) {
     super(message);
@@ -13,7 +15,9 @@ export class ConfigError extends Error {
 }
 
 const SECRET_KEYS = ['OPENAI_ADS_API_KEY', 'OPENAI_CONVERSIONS_API_KEY', 'OPENAI_PIXEL_ID'];
-const VALID_ROLES = ['viewer', 'analyst', 'admin', 'owner'];
+// Must stay in step with server/auth.mjs ROLES: a role a token may carry is a role dev
+// auth must be able to mint, or the two lists disagree about what a valid role is.
+const VALID_ROLES = ['viewer', 'analyst', 'editor', 'admin', 'owner'];
 
 function int(value, fallback, { min = 0, max = Number.MAX_SAFE_INTEGER, field = 'value' } = {}) {
   if (value === undefined || value === null || value === '') return fallback;
@@ -175,6 +179,53 @@ export function resolveConfig(env = {}) {
     );
   }
 
+  // ------------------------------------------------------------- connectors
+  // The HubSpot connector needs three things to be usable: the app's OAuth client, a
+  // key to seal the tokens it receives, and a public origin so webhook signatures can be
+  // verified against the URL HubSpot actually called. Any two without the third is a
+  // half-configured integration, so it is refused here rather than failing later.
+  let encryptionKey = null;
+  const rawConnectorKey = trimmed(env.CONNECTOR_ENCRYPTION_KEY);
+  if (rawConnectorKey) {
+    try {
+      encryptionKey = parseEncryptionKey(rawConnectorKey);
+    } catch (error) {
+      throw new ConfigError(error.message);
+    }
+  }
+
+  const hubspot = {
+    clientId: trimmed(env.HUBSPOT_CLIENT_ID),
+    clientSecret: trimmed(env.HUBSPOT_CLIENT_SECRET),
+    redirectUri: trimmed(env.HUBSPOT_REDIRECT_URI),
+    tokenPath: trimmed(env.HUBSPOT_TOKEN_PATH) ?? '/oauth/2026-09/token',
+    apiBase: trimmed(env.HUBSPOT_API_BASE) ?? 'https://api.hubapi.com',
+  };
+  const hubspotParts = [hubspot.clientId, hubspot.clientSecret, hubspot.redirectUri];
+  if (hubspotParts.some(Boolean) && !hubspotParts.every(Boolean)) {
+    throw new ConfigError('HUBSPOT_CLIENT_ID, HUBSPOT_CLIENT_SECRET and HUBSPOT_REDIRECT_URI must be set together.');
+  }
+  if (hubspot.clientId && !encryptionKey) {
+    throw new ConfigError(
+      'CONNECTOR_ENCRYPTION_KEY is required when a connector OAuth client is configured: tokens are stored sealed, never in plaintext.',
+    );
+  }
+  if (isProduction && hubspot.redirectUri && !/^https:\/\//i.test(hubspot.redirectUri)) {
+    throw new ConfigError('HUBSPOT_REDIRECT_URI must use https in production.');
+  }
+  if (!/^\//.test(hubspot.tokenPath)) {
+    throw new ConfigError('HUBSPOT_TOKEN_PATH must be a path such as /oauth/2026-09/token.');
+  }
+  const publicBaseUrl = trimmed(env.PUBLIC_BASE_URL);
+  if (publicBaseUrl && !/^https?:\/\/[^/]+/i.test(publicBaseUrl)) {
+    throw new ConfigError('PUBLIC_BASE_URL must be an absolute http(s) origin, e.g. https://api.example.com.');
+  }
+  if (isProduction && hubspot.clientId && !publicBaseUrl) {
+    throw new ConfigError(
+      'PUBLIC_BASE_URL is required to receive HubSpot webhooks in production: the v3 signature covers the full URL.',
+    );
+  }
+
   return {
     nodeEnv,
     isProduction,
@@ -237,6 +288,14 @@ export function resolveConfig(env = {}) {
       trustProxy,
       rateLimitPerMinute: int(env.RATE_LIMIT_PER_MINUTE, 60, { min: 1, max: 100000, field: 'RATE_LIMIT_PER_MINUTE' }),
       maxBodyBytes: int(env.MAX_BODY_BYTES, 256 * 1024, { min: 1024, max: 16 * 1024 * 1024, field: 'MAX_BODY_BYTES' }),
+    },
+    connectors: {
+      encryptionKey,
+      publicBaseUrl,
+      hubspot: {
+        ...hubspot,
+        scopesNote: 'read-only: crm.objects.contacts.read, crm.objects.deals.read',
+      },
     },
     accountTimezone: env.ACCOUNT_TIMEZONE ?? 'Asia/Kolkata',
     firstPartySource: env.FIRST_PARTY_SOURCE || null,

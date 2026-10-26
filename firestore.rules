@@ -16,6 +16,12 @@ rules_version = '2';
 //   adtrack_outbox    — queued undelivered events       (no TTL: a pending event must
 //                                                        not vanish; prune delivered/dead
 //                                                        rows with a scheduled job)
+//   adtrack_orgs/{orgId}/<collection> — tenant-scoped records: workspaces, memberships,
+//                                       campaigns, topics, leads, events, sources,
+//                                       ingestKeys, researchRuns. Reads and writes are
+//                                       server-only; OAuth tokens inside `sources` are
+//                                       AES-256-GCM sealed, so a database dump alone
+//                                       does not yield a usable CRM credential.
 service cloud.firestore {
   match /databases/{database}/documents {
     match /{document=**} {

@@ -347,6 +347,46 @@ tenant is `403 tenant_mismatch`. Signed with `X-ADTrack-Key`, `X-ADTrack-Timesta
 derived from it rather than asserted. Full envelope, rejection codes and qualification
 rules are in [`EVENT_SCHEMA.md`](./EVENT_SCHEMA.md).
 
+## Research and connector routes (Phase 2)
+
+Both families live under the same organization/workspace path as every other agency route,
+so the tenant check is the same code (`tenancy.context`), not a parallel implementation.
+
+| Route | Auth | What it does |
+|---|---|---|
+| `GET .../:ws/research/plan` | bearer, `data.read` | Goals and the server's own list of steps |
+| `POST .../:ws/research/runs` | bearer, `research.write` | Computes the report from stored records, saves it, audits `research.run`. Body: `{goal, note?}`; anything else in the body is ignored |
+| `GET .../:ws/research/runs` | bearer, `research.read` | Saved runs, newest first (summaries), `?limit=` ≤ 50 |
+| `GET .../:ws/research/runs/:runId` | bearer, `research.read` | One saved report, exactly as computed |
+| `DELETE .../:ws/research/runs/:runId` | bearer, `research.write` | Deletes a run; audits `research.delete` |
+| `GET .../:ws/connectors/hubspot` | bearer, `data.read` | Connection status, scopes, `lastSyncAt`, `lastSyncStatus`, `lastError`, `nextAction` |
+| `POST .../:ws/connectors/hubspot/connect` | bearer, `source.manage` | Returns `{authorizationUrl, state}`. `503 connector_not_configured` when the server has no OAuth client |
+| `POST .../:ws/connectors/hubspot/connect/complete` | bearer, `source.manage` | Body `{code, state}`; exchanges the code and seals the tokens |
+| `POST .../:ws/connectors/hubspot/sync` | bearer, `source.manage` | One bounded import; returns counts and an honest `lastSyncStatus` |
+| `POST .../:ws/connectors/hubspot/disconnect` | bearer, `source.manage` | Clears `auth` and the checkpoint; historical events stay |
+| `POST /api/connectors/hubspot/webhook/:org/:sourceConnectionId` | **HubSpot v3 signature** | Public by necessity: no bearer token. Verified against the raw body, the full URL and a 5-minute window. `503 webhook_not_configured` without `PUBLIC_BASE_URL` |
+
+A sync response is a report, not a success message:
+
+```json
+{
+  "status": "degraded",
+  "lastSyncStatus": "partial",
+  "partial": true,
+  "trigger": "manual",
+  "imported": 200,
+  "duplicates": 0,
+  "skipped": 0,
+  "pages": 2,
+  "countsSemantics": "unique events stored; a duplicate is one the server already had",
+  "error": { "code": "sync_incomplete", "message": "Pagination stopped at the configured page limit…" },
+  "connection": { "status": "degraded", "nextAction": "run_sync" }
+}
+```
+
+`imported` counts events this run actually created. Re-running an import is safe: the event
+ids are deterministic, so a second pass reports `duplicates` and stores nothing new.
+
 ## Production
 
 The API is stateless, so it deploys as a container:

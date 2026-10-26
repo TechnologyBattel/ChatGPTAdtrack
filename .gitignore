@@ -9,3 +9,7 @@ serviceAccount*.json
 .firebase/
 firebase-debug.log
 .DS_Store
+
+# Playwright artefacts (browser runs are opt-in: see playwright.config.ts)
+test-results/
+playwright-report/

@@ -28,7 +28,8 @@ npm install
 cp .env.example .env     # fill in the keys you actually have
 npm run api              # API on 0.0.0.0:8787
 npm run dev              # web app on 0.0.0.0:5173, proxies /api
-npm run verify           # the full gate
+npm run verify           # the full gate (lint, format, types, tests, build, guards, push E2E)
+npm run e2e              # browser tests; requires `npx playwright install chromium`
 ```
 
 Open the app. The bar under the search box says **Demo data** or
@@ -88,6 +89,32 @@ a full-funnel overview.
 Answers cover spend, leads, CPL, CAC, ROAS, pacing, country, device, campaign and
 ad-group rankings, plus "why do native and internal conversions differ". Every answer
 carries its sources and a "where these numbers come from" panel.
+
+## Guided research (Phase 2)
+
+In research mode the page opens a guided journey above the deterministic hint workspace:
+
+1. pick a goal (attribution, lead data, topics, sources);
+2. the **server** computes a report from this workspace's own records;
+3. the report shows what was counted, what was not measured, and what the product cannot
+   know — plus a saved snapshot you can reopen later.
+
+Every section is labelled `observed`, `none found` or `not measurable yet`. There is no
+progress percentage anywhere: while a request is open the page shows elapsed seconds and
+the server's own description of what that request reads.
+
+## CRM connector (HubSpot, read-only)
+
+`GET/POST /api/orgs/:org/workspaces/:ws/connectors/hubspot…` connect a HubSpot portal with
+two read scopes (`crm.objects.contacts.read`, `crm.objects.deals.read`), import contacts as
+leads, and import a deal stage as a qualification only when the source is trusted and the
+stage is one you listed. Tokens are sealed at rest; the webhook is verified with HubSpot's
+v3 signature. Setup and the exact verification status are in
+[`docs/CONNECTORS.md`](./CONNECTORS.md) §7.
+
+Without `HUBSPOT_CLIENT_ID`, `HUBSPOT_CLIENT_SECRET`, `HUBSPOT_REDIRECT_URI` and
+`CONNECTOR_ENCRYPTION_KEY` the feature is *not hidden*: the UI says the server is not
+configured and names the missing variables.
 
 ## Research (the honest version of "keyword research")
 

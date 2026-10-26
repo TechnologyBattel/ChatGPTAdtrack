@@ -12,7 +12,9 @@
 
 import { randomBytes } from 'node:crypto';
 import { ApiError } from './errors.mjs';
+import { freshnessOf } from './freshness.mjs';
 import { permissionsFor } from './tenancy.mjs';
+import { createResearch } from './research.mjs';
 import { attribute, DEFAULT_ATTRIBUTION_WINDOW_DAYS } from './events-v2.mjs';
 import { buildUtmUrl } from './utm.mjs';
 import { assertKnownKeys, countryCode, languageTag, oneOf, text, webUrl } from './validate.mjs';
@@ -24,12 +26,8 @@ export const TOPIC_STATUSES = ['new', 'reviewed', 'actioned', 'rejected'];
 
 const newId = (prefix) => `${prefix}_${randomBytes(9).toString('base64url')}`;
 
-/** Freshness is a fact about the observation date, not an opinion. */
-export function freshnessOf(observedAt, { now = () => Date.now(), staleAfterDays = 90 } = {}) {
-  if (typeof observedAt !== 'number') return 'unknown';
-  const ageDays = (now() - observedAt) / (24 * 60 * 60 * 1000);
-  return ageDays > staleAfterDays ? 'stale' : 'fresh';
-}
+// Defined once, in one place; re-exported so existing imports keep working.
+export { freshnessOf };
 
 const isoDate = (value, field) => {
   if (value === undefined || value === null || value === '') return null;
@@ -41,9 +39,12 @@ const isoDate = (value, field) => {
   return value;
 };
 
-export function createAgencyApi({ tenancy, store, sources = null, now = () => Date.now() } = {}) {
+export function createAgencyApi({ tenancy, store, sources = null, research = null, now = () => Date.now() } = {}) {
   if (!tenancy) throw new Error('createAgencyApi requires tenancy.');
   if (!store?.records) throw new Error('createAgencyApi requires a store with records.');
+  // Guided research reads the same records as the rest of the agency API. It is created
+  // here so there is exactly one way to reach it, with the same tenancy checks.
+  const researchApi = research ?? createResearch({ store, tenancy, now });
 
   // ------------------------------------------------------------------ campaigns
 
@@ -630,6 +631,49 @@ export function createAgencyApi({ tenancy, store, sources = null, now = () => Da
         return result;
       },
     ],
+    // ---------------------------------------------------------------- research
+    [
+      'GET',
+      /^\/api\/orgs\/([^/]+)\/workspaces\/([^/]+)\/research\/plan$/,
+      ({ principal, params }) => researchApi.plan({ principal, organizationId: params[0], workspaceId: params[1] }),
+    ],
+    [
+      'POST',
+      /^\/api\/orgs\/([^/]+)\/workspaces\/([^/]+)\/research\/runs$/,
+      ({ principal, params, body }) =>
+        researchApi.create({ principal, organizationId: params[0], workspaceId: params[1], body }),
+      201,
+    ],
+    [
+      'GET',
+      /^\/api\/orgs\/([^/]+)\/workspaces\/([^/]+)\/research\/runs$/,
+      ({ principal, params, query }) =>
+        researchApi
+          .list({ principal, organizationId: params[0], workspaceId: params[1], query })
+          .then((runs) => ({ runs })),
+    ],
+    [
+      'GET',
+      /^\/api\/orgs\/([^/]+)\/workspaces\/([^/]+)\/research\/runs\/([^/]+)$/,
+      ({ principal, params }) =>
+        researchApi.get({
+          principal,
+          organizationId: params[0],
+          workspaceId: params[1],
+          runId: params[2],
+        }),
+    ],
+    [
+      'DELETE',
+      /^\/api\/orgs\/([^/]+)\/workspaces\/([^/]+)\/research\/runs\/([^/]+)$/,
+      ({ principal, params }) =>
+        researchApi.remove({
+          principal,
+          organizationId: params[0],
+          workspaceId: params[1],
+          runId: params[2],
+        }),
+    ],
     [
       'GET',
       /^\/api\/orgs\/([^/]+)\/permissions$/,
@@ -642,7 +686,7 @@ export function createAgencyApi({ tenancy, store, sources = null, now = () => Da
 
   return {
     async handle({ method, path, body, query, principal }) {
-      for (const [verb, pattern, handler] of ROUTES) {
+      for (const [verb, pattern, handler, status = 200] of ROUTES) {
         if (verb !== method) continue;
         const match = pattern.exec(path);
         if (!match) continue;
@@ -656,7 +700,7 @@ export function createAgencyApi({ tenancy, store, sources = null, now = () => Da
         // Creating a collection member — including a new key version — is a 201.
         const creates =
           method === 'POST' && (/(orgs|workspaces|campaigns|topics|sources)$/.test(path) || /\/rotations$/.test(path));
-        return { matched: true, body: payload, status: creates ? 201 : 200 };
+        return { matched: true, body: payload, status: creates ? 201 : status };
       }
       return { matched: false };
     },

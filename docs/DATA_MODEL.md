@@ -52,6 +52,8 @@ bearing:
 | `leads` | `anonymousSessionId`, `eventIds[]`, `stage`, `qualification` | first touch wins; `qualification: null` until a human or trusted CRM decides |
 | `events` | `schemaVersion`, `eventId`, `eventType`, `occurredAt` (+`occurredAtRaw`), `utm`, `consentState` | immutable after insert; document id is deterministic |
 | `sources` | `provider`, `capability`, `status`, `trustedForQualification`, `lastSyncAt` | `write` only for `openai_ads`; trust only for `crm` |
+| `sources` (OAuth connector) | `connector`, `connectionStatus`, `auth.sealedAccessToken`, `auth.sealedRefreshToken`, `auth.expiresAt`, `auth.scopes`, `auth.portalId`, `checkpoint`, `lastSyncStatus`, `lastError`, `qualifiedStages` | tokens exist only in sealed form (AES-256-GCM, AAD = org:workspace:source); `checkpoint` is per object type; `lastSyncAt` is the last *success*, never overwritten by a failure |
+| `researchRuns` | `runId`, `workspaceId`, `goal`, `report`, `note`, `createdBy`, `createdAt` | an immutable snapshot: recomputing later does not alter a saved run; retention `null` (kept with the evidence it cites) |
 | `ingestKeys` | `sourceConnectionId`, `keyVersion`, `secret`, `status` | never returned after issue; revoked ≠ deleted (audit needs the trail) |
 | `auditLog` | `action`, `actor`, `actorRole`, `target`, `ok`, `detail` | append-only through the API; purged only by retention policy |
 

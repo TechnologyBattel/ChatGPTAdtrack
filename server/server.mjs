@@ -22,6 +22,8 @@ import { createTenancy } from './tenancy.mjs';
 import { createSources } from './sources.mjs';
 import { createEventIngest } from './events-v2.mjs';
 import { createAgencyApi } from './agency.mjs';
+import { createHubSpotConnector } from './connectors/hubspot.mjs';
+import { createConnectorRouter } from './connectors/router.mjs';
 import { ConfigError, resolveConfig } from './config.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -141,6 +143,39 @@ const sources = createSources({ store, tenancy });
 const ingestV2 = createEventIngest({ store });
 const agency = createAgencyApi({ tenancy, store, sources });
 
+// ---------------------------------------------------------------- connectors
+// The router always exists so the UI can ask for a status and be told, precisely, what
+// is not configured. The SDK is only imported when the OAuth client actually exists,
+// and the module is an optionalDependency — a deployment without HubSpot never loads it.
+let clientFactory = () => {
+  throw new Error('The HubSpot connector is not configured on this server.');
+};
+if (config.connectors.hubspot.clientId && config.connectors.encryptionKey) {
+  const { createHubSpotSdkClientFactory } = await import('./connectors/hubspot-sdk.mjs');
+  try {
+    clientFactory = await createHubSpotSdkClientFactory({ basePath: config.connectors.hubspot.apiBase });
+  } catch (error) {
+    fatal(error instanceof Error ? error.message : String(error));
+  }
+}
+
+const hubspot = createHubSpotConnector({
+  store,
+  tenancy,
+  encryptionKey: config.connectors.encryptionKey,
+  oauth: {
+    clientId: config.connectors.hubspot.clientId,
+    clientSecret: config.connectors.hubspot.clientSecret,
+    redirectUri: config.connectors.hubspot.redirectUri,
+    tokenPath: config.connectors.hubspot.tokenPath,
+    apiBase: config.connectors.hubspot.apiBase,
+  },
+  clientFactory,
+  ingest: ingestV2,
+});
+
+const connectors = createConnectorRouter({ hubspot, publicBaseUrl: config.connectors.publicBaseUrl });
+
 const app = createApp({
   env,
   auth,
@@ -153,6 +188,7 @@ const app = createApp({
   agency,
   sources,
   ingestV2,
+  connectors,
 });
 
 // Transport rules live in handler.mjs so tests can mount them on a throwaway port.
@@ -161,6 +197,13 @@ const listener = createRequestListener({
   maxBodyBytes: config.track.maxBodyBytes,
   trustProxy: config.track.trustProxy,
 });
+
+if (config.connectors.hubspot.clientId) {
+  console.log(`[api] connectors: hubspot OAuth client loaded (read-only scopes)`);
+  if (!config.connectors.publicBaseUrl) {
+    console.log('[api] connectors: PUBLIC_BASE_URL is unset, so HubSpot webhooks will be refused');
+  }
+}
 
 const server = http.createServer((req, res) => {
   void listener(req, res);

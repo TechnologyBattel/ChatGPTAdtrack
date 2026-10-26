@@ -18,14 +18,17 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test:watch": "vitest",
-    "set-role": "node scripts/set-role.mjs"
+    "set-role": "node scripts/set-role.mjs",
+    "e2e": "playwright test"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.104.5",
     "react": "18.3.1",
     "react-dom": "18.3.1"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
+    "@playwright/test": "^1.64.1",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/react": "^16.1.0",
     "@types/react": "18.3.12",
@@ -51,6 +54,7 @@
     "npm": ">=10"
   },
   "optionalDependencies": {
+    "@hubspot/api-client": "^14.0.1",
     "firebase-admin": "13.0.2"
   }
 }

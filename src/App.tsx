@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { QueryClientProvider } from '@tanstack/react-query';
 import { answerFor, SUGGESTIONS } from './lib/answer';
 import { DEFAULT_SETTINGS, formatMoney, formatRatio, metricsOf } from './lib/metrics';
 import { buildDataset } from './lib/demo';
 import { getDataset, getHealth, type Health } from './lib/api';
 import { AUTH_REQUIRED_EVENT, useAuth } from './lib/use-auth';
+import { createQueryClient } from './lib/query-client';
 import LoginScreen from './components/LoginScreen';
 import type { Dataset } from './lib/types';
 import SearchBar, { type Mode } from './components/SearchBar';
 import Answer from './components/Answer';
 import Research from './components/Research';
+import GuidedResearch from './components/GuidedResearch';
 import ConnectionBar from './components/ConnectionBar';
 import ExportMenu from './components/ExportMenu';
 import WorkspacePanel from './components/WorkspacePanel';
@@ -17,6 +20,17 @@ import { Footer, Header, Wordmark } from './components/Chrome';
 type Asked = { q: string; mode: Mode } | null;
 
 export default function App() {
+  // The query cache lives with the component tree (not in main.tsx) so tests and any
+  // embed of <App /> get the same behaviour as the app shell.
+  const [queryClient] = useState(() => createQueryClient());
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AppShell />
+    </QueryClientProvider>
+  );
+}
+
+function AppShell() {
   // Demo data is the floor: the page must never be blank because a key is missing.
   const [demo] = useState(() => buildDataset(90));
   const [dataset, setDataset] = useState<Dataset>(demo);
@@ -273,6 +287,11 @@ export default function App() {
             </span>
             {source === 'live' && <span className="ml-2 text-[#80868b]">live account data · cached 5 min</span>}
           </p>
+          {asked.mode === 'research' || !spec ? (
+            <div className="mb-5">
+              <GuidedResearch onNeedSignIn={() => setLoginOpen(true)} />
+            </div>
+          ) : null}
           {asked.mode === 'research' || !spec ? (
             <Research
               initialSeeds={asked.q}

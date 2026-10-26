@@ -104,3 +104,21 @@ an organization: a non-member gets `404`, identical to a nonexistent id.
   reporting works without it.
 - A DPA with OpenAI, a records-of-processing register, and a DPIA for the retention
   numbers are outstanding. The day counts here are a product policy, not a legal opinion.
+
+## 7. What a CRM import does and does not bring in (2026-10-26)
+
+An imported HubSpot contact creates a lead with a **provider record reference** and an
+`occurred_at`. It does not copy the contact's name, email, phone number or any custom
+property: those values are not read into events, and the adapter's tests assert that no
+event or lead contains them. The qualification of a lead records *who decided* (a person,
+or `crm:<source>`), never the deal's notes.
+
+Consequences worth stating plainly:
+
+- Imported leads carry `consent_state: 'unknown'`. A CRM record is not evidence that the
+  person consented to measurement in this product, and the report says so.
+- Research reports over imported data describe counts of records. They are not a legal
+  basis for contacting anyone, and nothing in the product sends a message.
+- Disconnecting a CRM clears the sealed credentials and the sync checkpoint immediately.
+  Events that already arrived stay, because they are history; they are subject to the same
+  retention policy as any other event.

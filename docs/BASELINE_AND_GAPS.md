@@ -105,7 +105,7 @@ was absent, **S3** = documentation/ergonomics.
 | # | Gap | Why not | Mark |
 |---|---|---|---|
 | G14 | Real OpenAI Ads account integration | Needs paid credentials; the product never invents a connector | UNKNOWN (blocked by design) |
-| G15 | OAuth for third-party CRM / Search Console | Needs registered apps and secrets; documented contract only | UNKNOWN (blocked) |
+| G15 | OAuth for third-party CRM / Search Console | **Partly closed in Phase 2**: a read-only HubSpot connector is implemented and tested against a fake provider. It is still not live-verified (no HubSpot app or account here), and Search Console remains deferred. See `CONNECTORS.md` §7.5 | PROVEN (our code) / UNKNOWN (real install) |
 | G16 | Firestore in production | No project, no credentials; the Firestore store is code-reviewed and unit-tested against a fake, never run against a real database | CLAIMED |
 | G17 | Deleting a workspace's data in Firestore recursively | `deleteWorkspace` removes known collections; Firestore subcollection deletion is implemented per collection, not recursive-by-API | PROVEN in the memory store, UNKNOWN in Firestore |
 | G18 | Write controls in the Workspace panel | Deliberate: writes need audit semantics and per-action confirmation; adding them un-audited would be worse than not having them | decision |
@@ -121,9 +121,14 @@ was absent, **S3** = documentation/ergonomics.
 | `src/lib/__tests__/global.test.ts` | 16 | IANA zones, DST day lengths, ISO country/currency, no FX conversion |
 | `src/lib/__tests__/agency.test.ts` | 30 | Campaign registry, UTM normalisation, topics + provenance, retention purge |
 | `src/lib/__tests__/workspace-ui.test.tsx` | 5 | Unavailable ≠ zero, suggestion ≠ observation, no qualified-by-default |
+| `src/lib/__tests__/hubspot.test.ts` | 25 | Sealed tokens + AAD, OAuth state, mapping, 1,000-record idempotency, 429/401/partial sync, webhook signature/replay/size |
+| `src/lib/__tests__/connector-routes.test.ts` | 9 | Route auth: tenant routes need a bearer token, the webhook does not, cross-org ids 404 |
+| `src/lib/__tests__/research-server.test.ts` | 13 | Report states, no invented metrics, no currency conversion, saved-run lifecycle + isolation |
+| `src/lib/__tests__/connector-config.test.ts` | 9 | Fail-closed startup: partial OAuth client, missing sealing key, https/public origin in production |
+| `src/lib/__tests__/guided-research.test.tsx` | 5 | Honest UI states: no percentages, unavailable ≠ 0, read-only role explained, unconfigured connector named |
 | pre-existing suites | 288 incl. 2 skipped | Money/window/pacing, consent, outbox, push E2E against a stub, Firestore index drift, UI smoke |
 
-**Totals:** `npm run verify` → **exit 0, 392 passed / 2 skipped**. The 2 skips are
+**Totals (Phase 2):** `npm run verify` → **exit 0, 455 passed / 2 skipped** across 22 files. The 2 skips are
 documented in the existing suites (they require a live upstream); they are not Phase 1
 tests.
 
@@ -136,7 +141,8 @@ exercised against in-memory or stub implementations.
 
 ```bash
 npm ci                       # exit 0
-npm run verify               # exit 0, 394 passed / 2 skipped
+npm run verify               # exit 0, 455 passed / 2 skipped (22 files)
+npm run e2e                  # needs Chromium; UNKNOWN in this environment
 npx vitest run src/lib/__tests__/tenancy.test.ts      # 28 passed
 npx vitest run src/lib/__tests__/events-v2.test.ts    # 27 passed
 npx vitest run src/lib/__tests__/global.test.ts       # 16 passed

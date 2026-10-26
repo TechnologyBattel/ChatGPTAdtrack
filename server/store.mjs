@@ -262,6 +262,9 @@ export const RETENTION_DAYS = {
   leads: 760, // 25 months
   auditLog: 396,
   topics: null,
+  // Saved research is a business record made by a person; it is kept as long as the
+  // evidence it cites (topics are kept indefinitely), so it is not swept.
+  researchRuns: null,
 };
 
 /** Which timestamp decides a record's age. Explicit per collection, not guessed. */
@@ -270,6 +273,7 @@ const RETENTION_FIELD = {
   leads: 'createdAt',
   auditLog: 'at',
   topics: 'createdAt',
+  researchRuns: 'createdAt',
 };
 
 function createMaintenance({ records, now }) {

@@ -10,6 +10,7 @@ feature sets of Ahrefs / Semrush / Keyword Insights / Keyword Cupid as used in p
 | **live-verified** | Exercised end-to-end through our HTTP server against a **stub** of the OpenAI Ads API (`scripts/e2e-push.mjs`). Proves our code, not their contract. |
 | **demo** | Works on deterministic demo data; no ad account has been connected. |
 | **UI-only** | Component behaviour verified in tests; no upstream call involved. |
+| **e2e-not-run** | Specs exist (`e2e/`), but no browser binary was available in the build environment; results are UNKNOWN. |
 | **not started** | Planned, not built. |
 
 No feature in this repository has been run against a **real** OpenAI ad account —
@@ -73,3 +74,18 @@ Everything below is unbuilt unless marked otherwise.
 6. **Keyboard-first command palette** — `/` already focuses the box; add ↑↓ history like a terminal.
 7. **Board/list toggle for clusters** — drag seeds between themes.
 8. **Multi-org** — explicitly out of scope until v1 is proven.
+
+## Guided research and the first CRM connector (2026-10-26)
+
+| # | Capability | What it does | Status |
+|---|---|---|---|
+| R1 | Guided research journey | Pick one of four goals; the server computes the report from this workspace's records | **live-verified against the local HTTP server** (curl smoke: plan → run → list) |
+| R2 | Honest data states | Every section reports `observed`, `no_data` or `unavailable`; "not measurable yet" is never rendered as `0` | **live-verified** + unit-tested |
+| R3 | Saved research runs | `POST …/research/runs` persists the report and audits `research.run`; a later review cannot be rewritten by new data | **live-verified** |
+| R4 | Findings with provenance | Each finding carries evidence, limitations and — where the product can act — one suggested next step | unit-tested |
+| C1 | HubSpot read-only connector | OAuth, sealed tokens, contact/deal sync, gated qualification | **PROVEN against a fake provider; not live-verified** |
+| C2 | HubSpot webhook | v3 signature, 5-minute window, idempotent, tenant from path + stored source | **PROVEN at the HTTP layer; no real delivery** |
+| C3 | Connector honesty in the UI | Shows `not connected` / `degraded` / `failed`, the missing environment variables, and why a role cannot act | component-tested |
+
+No feature here measures search volume, CPC, competitor spend or trends: those fields do
+not exist anywhere in the codebase.

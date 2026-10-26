@@ -60,3 +60,13 @@
 - 2026-10-25: Retention is an application sweep (default every 6 h) with an owner-only manual purge that returns per-collection counts. The day counts (events 396, leads 760, audit 396, topics kept) are a policy choice, not a legal opinion.
 - 2026-10-25: The Workspace panel is read-only. Writes are audited API actions that need their own confirmation flow; an un-audited button would be worse than the missing feature, and the gap is documented instead.
 - 2026-10-25: No connector is built in this phase. `sources` provides credential lifecycle and capability rules, `docs/CONNECTORS.md` states the contract, and every provider that needs OAuth or paid credentials stays explicitly unbuilt rather than stubbed.
+- 2026-10-26: Guided research is computed **on the server** from stored records; the client only chooses a goal. A client that posts its own `report` gets it ignored, because findings that the browser can assert are findings nobody can audit.
+- 2026-10-26: Research reports separate `observed`, `no_data` and `unavailable`. "We found no leads" and "we cannot measure qualification yet" are different sentences and must never collapse into `0`.
+- 2026-10-26: A saved research run is an immutable snapshot (`researchRuns`). New data changes the next run, not the old one.
+- 2026-10-26: CRM OAuth tokens are sealed with AES-256-GCM and bound to `org:workspace:sourceConnection` by AAD. Encrypting without tenant binding would let a copied ciphertext be replayed into another tenant.
+- 2026-10-26: The HubSpot connector requests read scopes only. Writing back to a customer's CRM is a product decision nobody has made, and an unused write scope is an unnecessary blast radius.
+- 2026-10-26: A deal stage qualifies a lead only when the source is explicitly `trustedForQualification` **and** the stage is in the operator's list. Provider vocabulary (`closedwon`) is not a product decision.
+- 2026-10-26: The HubSpot SDK's internal retries are disabled (`numberOfApiCallRetries: 0`). Two retry policies stacked multiply into an unbounded wait.
+- 2026-10-26: HubSpot's date-based token endpoint is the default (`/oauth/2026-09/token`), because `/oauth/v1/token` sunsets 2027-02-16 and a migration later is work for no benefit.
+- 2026-10-26: The webhook is refused (`503`) when `PUBLIC_BASE_URL` is unset. The v3 signature covers the exact URL called, so guessing it would verify nothing.
+- 2026-10-26: Browser tests live in `e2e/` and are **not** part of `npm run verify`: `verify` must pass on a machine with no browser. Their results are reported as UNKNOWN until a Chromium run exists.

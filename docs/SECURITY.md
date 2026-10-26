@@ -232,6 +232,38 @@ store; `store.test.ts` also drives the Firestore adapter against a fake instance
 `GET /api/audit` exposes push history to any authenticated role; the browser copy in
 `src/lib/hints.ts` is only a cache for the signed-out demo.
 
+## 7a. Connector credentials and the CRM webhook
+
+**Outbound (OAuth tokens).** HubSpot access and refresh tokens are encrypted at rest with
+AES-256-GCM (`server/connectors/crypto.mjs`). The key comes from
+`CONNECTOR_ENCRYPTION_KEY` (32 bytes, hex or base64) and is validated at startup; a
+malformed key is a startup error, not a runtime surprise. The ciphertext is bound to
+`organizationId:workspaceId:sourceConnectionId` as additional authenticated data, so a
+sealed value moved to another tenant fails to open instead of decrypting. `open()`
+returns `null` on any failure — tampering, wrong key or wrong tenant — and no code path
+treats `null` as "empty token". Tokens are never returned by an API response, never
+logged, and `redactError()` strips `access_token=`, `refresh_token=` and `Bearer …` from
+provider messages before they reach a log or a response.
+
+**Inbound (webhook).** The HubSpot webhook is the only public *write-shaped* route besides
+`/api/track`, and it is guarded differently because the provider's mechanism is different:
+
+| Guard | Implementation |
+|---|---|
+| Signature | `Base64(HMAC-SHA256(clientSecret, method + fullUrl + rawBody + timestamp))`, compared with `timingSafeEqual` |
+| Replay window | `X-HubSpot-Request-Timestamp` within 300 s; a stale delivery is `401 webhook_timestamp_stale` |
+| Raw body | The signature covers the bytes received; the route never re-serialises a parsed object to check it |
+| URL | Reconstructed from `PUBLIC_BASE_URL`; if it is unset the route answers `503` rather than verifying against a guess |
+| Size | At most 50 events per delivery (`413` above that) |
+| Identity | Tenant from the path **and** the stored source row; the body can never choose an organization |
+| Idempotency | Each delivery re-reads the record and writes deterministic event ids, so a retry is a duplicate, not a second lead |
+| Scope | The connection must still be `connected`; a disconnected one is `409` |
+
+**Why a shared HMAC helper would be wrong.** Our ingest keys sign
+`timestamp.rawBody` in hex with a per-source secret. HubSpot signs method + URL + body +
+timestamp in base64 with the app's client secret. Reusing one verifier for both would mean
+inventing a scheme neither party documents.
+
 ## 8. Verified vs unverified
 
 | Claim | Proof |
@@ -250,6 +282,11 @@ store; `store.test.ts` also drives the Firestore adapter against a fake instance
 | consent is consumed only after the upstream accepts; retryable failures queue | `security.test.ts` |
 | a dead letter releases the consent and is visible in the audit log | `security.test.ts` |
 | composite indexes cover every Firestore query; rules deny all | `firestore.test.ts` |
+| OAuth tokens are sealed, tenant-bound and unreadable after tampering or a tenant swap | `hubspot.test.ts` |
+| a sealed token never appears in a source record, a status response or an audit entry | `hubspot.test.ts` |
+| the webhook is reachable without a bearer token and refused without a valid v3 signature | `connector-routes.test.ts` |
+| a stale, oversized, replayed or disconnected-connection webhook is refused | `hubspot.test.ts` |
+| a non-member cannot read, sync or disconnect another organization's connector | `connector-routes.test.ts` |
 
 Not verified, stated plainly:
 
@@ -267,3 +304,8 @@ Not verified, stated plainly:
 - **`firebase-admin` optionality is asserted structurally** (package.json + injected
   import failure), not by uninstalling it in a real deployment.
 - **No container build was run.** The Dockerfile's first real check is CI.
+- **No real HubSpot account was contacted.** The connector, its OAuth state machine and
+  its webhook are proven against a fake provider client and a locally reproduced
+  signature; a real install (credentials, one sync, one delivery) is still UNKNOWN.
+- **The browser-level flow was not executed.** Chromium could not be downloaded in this
+  environment, so `e2e/` specs exist but their results are UNKNOWN.

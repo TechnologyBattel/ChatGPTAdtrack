@@ -51,6 +51,12 @@ export default tseslint.config(
     extends: [js.configs.recommended, ...tseslint.configs.recommended, prettier],
     languageOptions: { globals: { ...globals.node }, ecmaVersion: 2023, sourceType: 'module' },
   },
+  // Playwright: Node context, typed, browser tests rather than app code.
+  {
+    files: ['playwright.config.ts', 'e2e/**/*.ts'],
+    extends: [js.configs.recommended, ...tseslint.configs.recommended, prettier],
+    languageOptions: { globals: { ...globals.node }, ecmaVersion: 2023, sourceType: 'module' },
+  },
   {
     files: ['*.config.js'],
     extends: [js.configs.recommended, prettier],

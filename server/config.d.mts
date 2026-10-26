@@ -39,6 +39,20 @@ export interface ResolvedConfig {
     sweepEnabled: boolean;
     sweepIntervalMs: number;
   };
+  connectors: {
+    /** 32-byte AES key for sealing OAuth tokens, or null when no connector is configured. */
+    encryptionKey: Buffer | null;
+    /** Public origin of this API, used to reconstruct the URL a webhook signed. */
+    publicBaseUrl: string | null;
+    hubspot: {
+      clientId: string | null;
+      clientSecret: string | null;
+      redirectUri: string | null;
+      tokenPath: string;
+      apiBase: string;
+      scopesNote: string;
+    };
+  };
   storageMode: 'memory' | 'firestore';
   track: {
     origins: string[];

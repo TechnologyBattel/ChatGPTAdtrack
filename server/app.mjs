@@ -29,6 +29,9 @@ function publicHealth(h) {
  *                schema_version 2 events are refused rather than half-handled.
  *   sources    — createSources(...); resolves per-tenant ingest keys
  *   ingestV2   — createEventIngest(...); validates and persists v2 events
+ *   connectors — createConnectorRouter(...); provider adapters (HubSpot) and their
+ *                webhook. The webhook is public by necessity and authenticates with the
+ *                provider's own signature, so it is routed before the bearer-token paths.
  *   logger     — optional
  */
 export function createApp({
@@ -43,6 +46,7 @@ export function createApp({
   agency = null,
   sources = null,
   ingestV2 = null,
+  connectors = null,
   logger = console,
   cacheMs = 5 * 60 * 1000,
   now = () => Date.now(),
@@ -361,6 +365,24 @@ export function createApp({
             requireConsent: basis === 'granted',
           });
           return { status: 202, body: { ...result, keyVersion } };
+        }
+
+        // ------------------------------------------------------------- connectors
+        // Tenant routes prove membership inside the adapter; the webhook route is public
+        // and verifies HubSpot's v3 signature instead. Both need the raw body, which the
+        // transport keeps for exactly this reason.
+        if (connectors && (path.startsWith('/api/connectors/') || path.includes('/connectors/'))) {
+          const isWebhook = path.startsWith('/api/connectors/');
+          const principal = isWebhook ? null : await requirePrincipal(req);
+          const routed = await connectors.handle({
+            method,
+            path,
+            body: req.body ?? {},
+            headers,
+            rawBody: req.rawBody ?? '',
+            principal,
+          });
+          if (routed.matched) return { status: routed.status, body: routed.body };
         }
 
         // --------------------------------------------------------------- agency
