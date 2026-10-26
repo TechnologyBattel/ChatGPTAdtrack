@@ -294,6 +294,9 @@ export function createHubSpotConnector({
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: body.toString(),
+        // The body carries client_secret and the refresh token. A redirect would re-send
+        // it to whatever host answered the 3xx, so redirects are refused outright.
+        redirect: 'error',
         // A hung provider must not hold a request open until the platform kills it.
         signal: AbortSignal.timeout(Number(oauth.requestTimeoutMs ?? TOKEN_REQUEST_TIMEOUT_MS)),
       });

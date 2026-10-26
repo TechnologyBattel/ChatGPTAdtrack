@@ -57,6 +57,12 @@ jobs:
       - name: End-to-end push/undo against a stub
         run: node scripts/e2e-push.mjs
 
+      - name: Dockerfile static checks (not a substitute for a build)
+        run: node scripts/check-dockerfile.mjs
+
+      - name: Supply-chain gate self-test (proves the gate can fail)
+        run: node scripts/supply-chain.mjs self-test
+
   supply-chain:
     name: Licences, vulnerabilities and SBOM
     runs-on: ubuntu-latest
@@ -78,6 +84,9 @@ jobs:
       # owner and a review date — the check prints them so they stay visible.
       - name: Supply-chain gate
         run: node scripts/supply-chain.mjs all --check
+
+      - name: Supply-chain gate self-test
+        run: node scripts/supply-chain.mjs self-test
 
       - name: Third-party notices match the installed tree
         run: |
@@ -147,3 +156,29 @@ jobs:
           health=$(docker inspect -f '{{json .Config.Healthcheck.Test}}' adtrack-api:ci)
           echo "healthcheck: ${health}"
           echo "${health}" | grep -q '/api/health' || { echo "::error::healthcheck must probe /api/health"; exit 1; }
+
+      # The image is built for production; this smoke run overrides auth to dev so it can
+      # start without a cloud project. It proves the image starts, answers /api/health as a
+      # non-root user, and exits cleanly on SIGTERM — the parts a static check cannot show.
+      - name: Container smoke — start, health, graceful shutdown
+        run: |
+          set -euo pipefail
+          docker run -d --name adtrack-smoke -p 8080:8080 \
+            -e NODE_ENV=development -e AUTH_MODE=dev -e API_PORT=8080 \
+            -e STORAGE=memory -e LOG_FORMAT=json adtrack-api:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/api/health > /tmp/health.json; then break; fi
+            sleep 1
+          done
+          cat /tmp/health.json
+          python3 -c "import json,sys; d=json.load(open('/tmp/health.json')); assert isinstance(d.get('ok'), bool), d"
+          test "$(docker exec adtrack-smoke id -u)" = "1000" || { echo "::error::process is not the node user's uid 1000"; exit 1; }
+          docker logs adtrack-smoke | tail -5
+          start=$(date +%s)
+          docker stop --time 30 adtrack-smoke > /dev/null
+          end=$(date +%s)
+          code=$(docker inspect -f '{{.State.ExitCode}}' adtrack-smoke)
+          echo "stop took $((end-start))s, exit code ${code}"
+          test "${code}" = "0" || { echo "::error::container did not exit 0 after SIGTERM (drain deadline exceeded?)"; docker logs adtrack-smoke; exit 1; }
+          docker logs adtrack-smoke | grep -q 'drained: all connections closed' || { echo "::error::no drain log line"; docker logs adtrack-smoke; exit 1; }
+          docker rm adtrack-smoke > /dev/null

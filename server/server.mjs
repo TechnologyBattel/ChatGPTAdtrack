@@ -16,6 +16,7 @@ import { createAuth, createFirebaseVerifier, createAdminLoader, generateDevToken
 import { createConsentService } from './consent.mjs';
 import { createFirestoreStore, createMemoryStore } from './store.mjs';
 import { createRateLimiter } from './limits.mjs';
+import { createLogger } from './log.mjs';
 import { createRequestListener } from './handler.mjs';
 import { createApp } from './app.mjs';
 import { createTenancy } from './tenancy.mjs';
@@ -41,8 +42,12 @@ function loadEnvFile() {
 }
 loadEnvFile();
 
+// A logger exists before configuration is parsed: a rejected config must still produce a
+// readable line, and the configured (json) logger cannot exist yet at that point.
+const bootstrapLogger = createLogger({ format: 'text' });
+
 function fatal(message) {
-  console.error(`[api] FATAL: ${message}`);
+  bootstrapLogger.error(`[api] FATAL: ${message}`);
   process.exit(1);
 }
 
@@ -192,18 +197,24 @@ const app = createApp({
   connectors,
 });
 
+// One logger for the process: request lines, retention/outbox events and start-up
+// messages all go through it, so the format cannot drift between them.
+const logger = createLogger({ format: config.observability.logFormat });
+
 // Transport rules live in handler.mjs so tests can mount them on a throwaway port.
 const listener = createRequestListener({
   app,
   maxBodyBytes: config.track.maxBodyBytes,
   trustProxy: config.track.trustProxy,
   draining: () => draining,
+  slowRequestMs: config.observability.slowRequestMs,
+  logger,
 });
 
 if (config.connectors.hubspot.clientId) {
-  console.log(`[api] connectors: hubspot OAuth client loaded (read-only scopes)`);
+  logger.info(`[api] connectors: hubspot OAuth client loaded (read-only scopes)`);
   if (!config.connectors.publicBaseUrl) {
-    console.log('[api] connectors: PUBLIC_BASE_URL is unset, so HubSpot webhooks will be refused');
+    logger.info('[api] connectors: PUBLIC_BASE_URL is unset, so HubSpot webhooks will be refused');
   }
 }
 
@@ -220,9 +231,9 @@ async function sweepRetention() {
   try {
     const result = await store.maintenance.purge();
     const removed = Object.entries(result.removed).filter(([, n]) => n > 0);
-    if (removed.length) console.log(`[retention] purged ${removed.map(([k, n]) => `${k}=${n}`).join(' ')}`);
+    if (removed.length) logger.info(`[retention] purged ${removed.map(([k, n]) => `${k}=${n}`).join(' ')}`);
   } catch (error) {
-    console.error(`[retention] sweep failed: ${error?.message ?? error}`);
+    logger.error(`[retention] sweep failed: ${error?.message ?? error}`);
   }
 }
 
@@ -237,26 +248,26 @@ if (config.retention.sweepEnabled) {
 let outboxTimer = null;
 if (config.outbox.enabled) {
   outboxTimer = setInterval(() => {
-    outbox.drain().catch((error) => console.error(`[outbox] drain failed: ${error?.message ?? error}`));
+    outbox.drain().catch((error) => logger.error(`[outbox] drain failed: ${error?.message ?? error}`));
   }, config.outbox.intervalMs);
   outboxTimer.unref?.();
 }
 
 server.listen(config.apiPort, '0.0.0.0', () => {
-  console.log(`[api] listening on 0.0.0.0:${config.apiPort} (${config.nodeEnv})`);
-  console.log(`[api] auth: ${config.authMode}${config.authMode === 'dev' ? ` role=${config.devRole}` : ''}`);
-  console.log(`[api] storage: ${store.kind}`);
-  console.log(`[api] consent secrets: ${consent.secrets().join(', ')} (signing as ${consent.currentVersion})`);
-  console.log(
+  logger.info(`[api] listening on 0.0.0.0:${config.apiPort} (${config.nodeEnv})`);
+  logger.info(`[api] auth: ${config.authMode}${config.authMode === 'dev' ? ` role=${config.devRole}` : ''}`);
+  logger.info(`[api] storage: ${store.kind}`);
+  logger.info(`[api] consent secrets: ${consent.secrets().join(', ')} (signing as ${consent.currentVersion})`);
+  logger.info(
     `[api] trust proxy: ${config.track.trustProxy} hop(s); origins: ${config.track.origins.join(', ') || 'none'}`,
   );
-  console.log(`[api] mode: ${env.adsKey && env.pixelId ? 'live' : 'demo (no keys on server)'}`);
-  console.log(
+  logger.info(`[api] mode: ${env.adsKey && env.pixelId ? 'live' : 'demo (no keys on server)'}`);
+  logger.info(
     `[api] tenancy: organizations + workspaces (${store.kind === 'memory' ? 'in-memory, not durable' : store.kind})`,
   );
   if (config.authMode === 'dev') {
-    console.log('[api] WARNING: dev auth is enabled. POST /api/dev/session returns a write-role token.');
-    console.log('[api] WARNING: dev auth and ad account keys are mutually exclusive by configuration.');
+    logger.info('[api] WARNING: dev auth is enabled. POST /api/dev/session returns a write-role token.');
+    logger.info('[api] WARNING: dev auth and ad account keys are mutually exclusive by configuration.');
   }
 });
 
@@ -273,19 +284,19 @@ let shutdownTimer = null;
 function shutdown(signal) {
   if (shuttingDown) {
     // A second signal means "now": the operator has stopped being patient.
-    console.error(`[api] ${signal} again: exiting without waiting`);
+    logger.error(`[api] ${signal} again: exiting without waiting`);
     process.exit(1);
   }
   shuttingDown = true;
   draining = true;
-  console.log(`[api] ${signal} received: draining for up to ${config.shutdown.timeoutMs}ms`);
+  logger.info(`[api] ${signal} received: draining for up to ${config.shutdown.timeoutMs}ms`);
 
   if (outboxTimer) clearInterval(outboxTimer);
   if (retentionTimer) clearInterval(retentionTimer);
 
   shutdownTimer = setTimeout(() => {
     const open = server.closeAllConnections ? 'open sockets were forcibly closed' : 'no socket API available';
-    console.error(
+    logger.error(
       `[api] drain deadline of ${config.shutdown.timeoutMs}ms passed; ${open}. Some requests may not have completed.`,
     );
     server.closeAllConnections?.();
@@ -295,7 +306,7 @@ function shutdown(signal) {
 
   server.close(() => {
     clearTimeout(shutdownTimer);
-    console.log('[api] drained: all connections closed');
+    logger.info('[api] drained: all connections closed');
     process.exit(0);
   });
   // Idle keep-alive sockets have nothing to finish; closing them is what makes a drain

@@ -284,3 +284,28 @@ describe('Retry-After propagation (gap A3)', () => {
     expect(res.headers['retry-after']).toBeUndefined();
   });
 });
+
+describe('request correlation (observability)', () => {
+  const get = (port: number, headers: Record<string, string> = {}) =>
+    new Promise<{ status: number; headers: http.IncomingHttpHeaders }>((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, method: 'GET', path: '/api/health', headers }, (res) => {
+        res.resume();
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+
+  it('always answers with a request id, and reuses a well-formed one', async () => {
+    const { port } = await mount();
+    const generated = await get(port);
+    expect(generated.headers['x-request-id']).toMatch(/^[0-9a-f-]{36}$/);
+
+    const reused = await get(port, { 'x-request-id': 'upstream-id-12345678' });
+    expect(reused.headers['x-request-id']).toBe('upstream-id-12345678');
+
+    // A hostile id is replaced rather than echoed into logs and headers.
+    const replaced = await get(port, { 'x-request-id': 'bad id with spaces <script>' });
+    expect(replaced.headers['x-request-id']).not.toContain('<script>');
+  });
+});

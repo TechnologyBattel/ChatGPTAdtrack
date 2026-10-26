@@ -9,7 +9,7 @@
     "preview": "vite preview --host 0.0.0.0 --port 4173",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "verify": "npm run lint && npm run format:check && tsc --noEmit && vitest run && vite build && node scripts/check-server.mjs && node scripts/check-prod-guards.mjs && node scripts/e2e-push.mjs",
+    "verify": "npm run lint && npm run format:check && tsc --noEmit && vitest run && vite build && node scripts/check-server.mjs && node scripts/check-prod-guards.mjs && node scripts/e2e-push.mjs && node scripts/check-dockerfile.mjs && node scripts/supply-chain.mjs self-test",
     "api": "node server/server.mjs",
     "dev:all": "node server/server.mjs & vite --host 0.0.0.0 --port 5173 --strictPort",
     "e2e:push": "node scripts/e2e-push.mjs",
@@ -26,7 +26,11 @@
     "notices": "node scripts/supply-chain.mjs notices",
     "audit": "node scripts/supply-chain.mjs audit",
     "e2e:preflight": "node scripts/check-e2e-browser.mjs",
-    "load:smoke": "node scripts/load-smoke.mjs"
+    "load:smoke": "node scripts/load-smoke.mjs",
+    "check:docker": "node scripts/check-dockerfile.mjs",
+    "supply-chain:selftest": "node scripts/supply-chain.mjs self-test",
+    "staging:check": "node scripts/staging-check.mjs",
+    "perf": "node scripts/load-smoke.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.104.5",

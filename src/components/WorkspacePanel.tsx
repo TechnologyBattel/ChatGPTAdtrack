@@ -6,7 +6,7 @@
 // path to the same writes. The panel's job is to show what the server reports —
 // including, in plain words, what it does not know.
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   getPermissions,
@@ -72,6 +72,19 @@ export default function WorkspacePanel({ onClose }: { onClose: () => void }) {
   const [state, setState] = useState<Loaded>(EMPTY);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+
+  // This panel covers the page, so it has to behave like a dialog: announce itself, take
+  // focus, and close on Escape. Without that a keyboard or screen-reader user is stuck in
+  // a full-screen region with no announced boundary.
+  useEffect(() => {
+    closeRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
 
   const loadWorkspace = useCallback(async (orgId: string, workspaceId: string) => {
     const [permissions, summary, campaigns, topics, leads, sources] = await Promise.all([
@@ -139,16 +152,24 @@ export default function WorkspacePanel({ onClose }: { onClose: () => void }) {
   const workspace = state.workspaces.find((w) => w.workspaceId === state.workspaceId) ?? null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-y-auto bg-white">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="workspace-panel-title"
+      className="fixed inset-0 z-50 overflow-y-auto bg-white"
+    >
       <div className="mx-auto w-full max-w-4xl px-4 py-5">
         <header className="mb-4 flex items-start justify-between gap-3">
           <div>
-            <h1 className="text-[18px] font-medium text-ink">Workspace</h1>
+            <h1 id="workspace-panel-title" className="text-[18px] font-medium text-ink">
+              Workspace
+            </h1>
             <p className="text-[12px] text-muted">
               What the server holds for your organization. Read-only; writes are audited API actions.
             </p>
           </div>
           <button
+            ref={closeRef}
             type="button"
             onClick={onClose}
             className="shrink-0 rounded-full border border-line px-3 py-1 text-[12px] text-muted transition hover:bg-cloud"

@@ -8,6 +8,13 @@
 
 import { defineConfig, devices } from '@playwright/test';
 
+// An explicitly provided browser binary (PLAYWRIGHT_CHROMIUM_EXECUTABLE) lets a staging
+// host or a constrained sandbox run the same suite against a pinned system Chromium. It is
+// opt-in: when it is unset Playwright resolves its own download, and the preflight in
+// scripts/check-e2e-browser.mjs applies the same two rules so the gate cannot diverge from
+// what the suite would actually launch.
+const executablePath = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || undefined;
+
 export default defineConfig({
   testDir: './e2e',
   testMatch: /.*\.e2e\.ts/,
@@ -19,7 +26,12 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:5173',
     trace: 'retain-on-failure',
   },
-  projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
+  projects: [
+    {
+      name: 'chromium',
+      use: { ...devices['Desktop Chrome'], launchOptions: { executablePath, args: ['--no-sandbox'] } },
+    },
+  ],
   webServer: [
     {
       command: 'node server/server.mjs',

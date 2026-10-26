@@ -15,20 +15,33 @@ import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
 
-let chromium = null;
-let reason = null;
-try {
-  ({ chromium } = require('playwright-core'));
-} catch (error) {
-  reason = `playwright-core is not installed: ${error?.message ?? error}`;
-}
+// Same rule as playwright.config.ts: an explicit binary wins, otherwise Playwright's own
+// resolution is checked. Keeping the two in step is the point — a preflight that passed on
+// a path the suite would ignore would be worse than no preflight.
+const override = process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE || null;
 
-if (chromium) {
-  const executable = chromium.executablePath?.();
-  if (!executable) {
-    reason = 'playwright could not resolve a Chromium executable path';
-  } else if (!existsSync(executable)) {
-    reason = `Chromium is not installed at ${executable} (run: npx playwright install chromium)`;
+let reason = null;
+let resolved = override;
+
+if (override) {
+  if (!existsSync(override)) {
+    reason = `PLAYWRIGHT_CHROMIUM_EXECUTABLE points at a missing file: ${override}`;
+    resolved = null;
+  }
+} else {
+  let chromium = null;
+  try {
+    ({ chromium } = require('playwright-core'));
+  } catch (error) {
+    reason = `playwright-core is not installed: ${error?.message ?? error}`;
+  }
+  if (chromium) {
+    resolved = chromium.executablePath?.() ?? null;
+    if (!resolved) {
+      reason = 'playwright could not resolve a Chromium executable path';
+    } else if (!existsSync(resolved)) {
+      reason = `Chromium is not installed at ${resolved} (run: npx playwright install chromium)`;
+    }
   }
 }
 
@@ -38,4 +51,4 @@ if (reason) {
   process.exit(2);
 }
 
-console.log(`E2E GATE: BROWSER READY — ${chromium.executablePath()}`);
+console.log(`E2E GATE: BROWSER READY — ${resolved}`);

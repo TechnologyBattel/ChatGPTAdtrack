@@ -13,6 +13,7 @@
 // Usage:
 //   node scripts/load-smoke.mjs --url http://127.0.0.1:8787 --duration 10 --concurrency 8
 //   node scripts/load-smoke.mjs --path /api/health --token "$TOKEN" --json artifacts/load-smoke.json
+//   node scripts/load-smoke.mjs --path /api/nope --expect-status 404 --json artifacts/load-error.json
 //
 // Exits non-zero if any request failed or if a latency budget you pass was exceeded, so it
 // can be used as a gate (with a budget chosen from a real requirement, not from a guess).
@@ -37,6 +38,9 @@ const token = flag('token', null);
 const jsonPath = flag('json', null);
 const p95BudgetMs = flag('budget-p95', null);
 const maxErrorRate = flag('max-error-rate', null);
+// Which status counts as success. Default 2xx; an error-path profile passes e.g. 404 so
+// its latency is measured without being scored as a failure.
+const expectStatus = flag('expect-status', null);
 
 const url = `${baseUrl}${path}`;
 const deadline = Date.now() + durationSeconds * 1000;
@@ -64,7 +68,8 @@ async function worker() {
       // The body must be consumed for the connection to be reusable.
       await response.arrayBuffer();
       statuses.set(response.status, (statuses.get(response.status) ?? 0) + 1);
-      if (!response.ok) failed += 1;
+      const expected = expectStatus === null ? response.ok : response.status === Number(expectStatus);
+      if (!expected) failed += 1;
     } catch {
       failed += 1;
       statuses.set('error', (statuses.get('error') ?? 0) + 1);
@@ -86,6 +91,7 @@ const result = {
   kind: 'single-process smoke probe, not a capacity or soak test',
   url,
   path,
+  expectedStatus: expectStatus === null ? '2xx' : Number(expectStatus),
   concurrency,
   durationSeconds,
   elapsedSeconds: Number(elapsedSeconds.toFixed(2)),

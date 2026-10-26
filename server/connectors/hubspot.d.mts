@@ -60,28 +60,40 @@ export interface HubSpotConnector {
   configured: boolean;
   missingConfig: string[];
   scopes: string[];
-  status(input: { principal: { uid: string }; organizationId: string; workspaceId: string }): Promise<HubSpotStatus>;
+  status(input: {
+    principal: { uid: string; role?: string };
+    organizationId: string;
+    workspaceId: string;
+  }): Promise<HubSpotStatus>;
   connectStart(input: {
-    principal: { uid: string };
+    principal: { uid: string; role?: string };
     organizationId: string;
     workspaceId: string;
     body?: Record<string, any>;
-  }): Promise<{ authorizationUrl: string; state: string; status: string }>;
+  }): Promise<{
+    authorizationUrl: string;
+    state: string;
+    /** Id of the source row the callback will finish; the webhook path needs it. */
+    sourceConnectionId: string;
+    expiresAt: number;
+    scopes: string[];
+    status: string;
+  }>;
   connectComplete(input: {
-    principal: { uid: string };
+    principal: { uid: string; role?: string };
     organizationId: string;
     workspaceId: string;
     body: { code: string; state: string };
   }): Promise<{ status: string }>;
   sync(input: {
-    principal: { uid: string };
+    principal: { uid: string; role?: string };
     organizationId: string;
     workspaceId: string;
     trigger?: string;
     signal?: AbortSignal;
   }): Promise<HubSpotSyncResult>;
   disconnect(input: {
-    principal: { uid: string };
+    principal: { uid: string; role?: string };
     organizationId: string;
     workspaceId: string;
   }): Promise<{ status: string; disconnected: boolean }>;

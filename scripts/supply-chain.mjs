@@ -226,7 +226,7 @@ export function auditReport() {
       }
     }
   }
-  const blocking = advisories.filter((a) => ['high', 'critical'].includes(a.severity) && !acceptedNames.has(a.package));
+  const blocking = blockingAdvisories(advisories, acceptedNames);
   return {
     generatedAt: new Date().toISOString(),
     metadata: parsed.metadata ?? null,
@@ -234,6 +234,17 @@ export function auditReport() {
     accepted: allow.accepted ?? [],
     blocking,
   };
+}
+
+/**
+ * The gate's decision, kept separate from the reading of `npm audit`.
+ *
+ * A gate that has never been shown to fail is indistinguishable from a gate that cannot
+ * fail, so this function is exercised by `self-test` with synthetic advisories.
+ */
+export function blockingAdvisories(advisories, acceptedPackageNames) {
+  const accepted = acceptedPackageNames instanceof Set ? acceptedPackageNames : new Set(acceptedPackageNames ?? []);
+  return advisories.filter((a) => ['high', 'critical'].includes(a.severity) && !accepted.has(a.package));
 }
 
 /** Attribution list: every package, its license and where it came from. */
@@ -319,6 +330,54 @@ function main() {
       console.log(`  BLOCKING ${item.severity}: ${item.package} — ${item.title ?? item.via ?? item.advisory ?? ''}`);
     }
     if (check && report.blocking.length > 0) failed = true;
+  }
+
+  if (command === 'self-test') {
+    // Proves the gate can fail. Every case states the expected decision, so a regression
+    // in the rule surfaces as a failure here instead of a quiet pass in CI.
+    const cases = [
+      {
+        name: 'a critical in an unrelated package blocks',
+        advisories: [{ package: 'left-pad', severity: 'critical' }],
+        accepted: [],
+        expected: 1,
+      },
+      {
+        name: 'a high in an accepted package does not block',
+        advisories: [{ package: 'firebase-admin', severity: 'high' }],
+        accepted: ['firebase-admin'],
+        expected: 0,
+      },
+      {
+        name: 'moderate advisories never block (they are reviewed, not gated)',
+        advisories: [{ package: 'small-thing', severity: 'moderate' }],
+        accepted: [],
+        expected: 0,
+      },
+      {
+        name: 'the highest severity in a mixed set still blocks',
+        advisories: [
+          { package: 'a', severity: 'moderate' },
+          { package: 'b', severity: 'high' },
+          { package: 'firebase-admin', severity: 'high' },
+        ],
+        accepted: ['firebase-admin'],
+        expected: 1,
+      },
+    ];
+    let failures = 0;
+    for (const testCase of cases) {
+      const blocking = blockingAdvisories(testCase.advisories, testCase.accepted);
+      const ok = blocking.length === testCase.expected;
+      if (!ok) failures += 1;
+      console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${testCase.name}`);
+    }
+    if (failures > 0) {
+      console.error(`supply-chain gate self-test: ${failures} case(s) failed`);
+      process.exit(1);
+    }
+    console.log('supply-chain gate self-test: ok');
+    return;
   }
 
   if (command === 'notices' || command === 'all') {

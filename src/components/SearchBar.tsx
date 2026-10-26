@@ -48,7 +48,7 @@ export default function SearchBar({ mode, onModeChange, onSubmit, compact, initi
           e.preventDefault();
           submit(value);
         }}
-        className="flex items-center gap-2 rounded-full border border-line bg-white px-4 py-2 shadow-[0_1px_6px_rgba(32,33,36,0.08)] transition hover:shadow-pill focus-within:shadow-pill"
+        className="flex flex-wrap items-center gap-2 rounded-3xl border border-line bg-white px-4 py-2 sm:flex-nowrap sm:rounded-full shadow-[0_1px_6px_rgba(32,33,36,0.08)] transition hover:shadow-pill focus-within:shadow-pill"
         role="search"
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden className="shrink-0 text-muted">
@@ -66,7 +66,12 @@ export default function SearchBar({ mode, onModeChange, onSubmit, compact, initi
           autoComplete="off"
         />
         <div className="hidden h-6 w-px bg-line sm:block" aria-hidden />
-        <div className="hidden items-center gap-1 sm:flex" role="group" aria-label="Answer mode">
+        {/*
+          The mode group stays in the layout at every width. Hiding it below `sm` made
+          research unreachable on a phone — the toggle was not merely off-screen, it was
+          absent from the accessibility tree. On a narrow viewport the form wraps instead.
+        */}
+        <div className="flex shrink-0 items-center gap-1" role="group" aria-label="Answer mode">
           {(['track', 'research'] as Mode[]).map((m) => (
             <button
               key={m}

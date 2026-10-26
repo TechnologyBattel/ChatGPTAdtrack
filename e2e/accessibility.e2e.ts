@@ -1,12 +1,14 @@
 // Accessibility checks that do not need a pixel baseline.
 //
 // Deliberately narrow and mechanical: every interactive control has an accessible name,
-// the guided-research journey is reachable and operable from the keyboard alone, the two
-// overlays can be dismissed without a mouse, and the page reports no uncaught errors while
-// doing it. These are the failures that actually lock people out; contrast and layout
-// quality are reviewed separately and are not asserted here.
+// the guided-research journey is reachable and operable from the keyboard alone, the
+// full-screen workspace overlay behaves like a dialog (announced, focusable, Escape to
+// close), and the page reports no uncaught errors while doing it. These are the failures
+// that actually lock people out; contrast and visual quality are reviewed separately and
+// are not asserted here.
 
 import { expect, test } from '@playwright/test';
+import { seedWorkspace } from './fixtures/staging';
 
 async function openResearch(page: import('@playwright/test').Page) {
   await page.goto('/');
@@ -17,6 +19,10 @@ async function openResearch(page: import('@playwright/test').Page) {
 }
 
 test.describe('accessibility', () => {
+  test.beforeAll(async () => {
+    await seedWorkspace();
+  });
+
   test('every interactive control exposes an accessible name', async ({ page }) => {
     await openResearch(page);
     const unnamed = await page.evaluate(() => {
@@ -46,10 +52,9 @@ test.describe('accessibility', () => {
     await firstGoal.focus();
     await expect(firstGoal).toBeFocused();
     await page.keyboard.press('ArrowDown');
-    const checked = page.locator('input[name="research-goal"]:checked');
-    await expect(checked).toHaveCount(1);
+    await expect(page.locator('input[name="research-goal"]:checked')).toHaveCount(1);
 
-    // The run button is reachable by tabbing and activates with Enter or Space.
+    // The run button is reachable by tabbing and activates with Enter.
     const runButton = page.getByRole('button', { name: /Run research/i });
     await runButton.focus();
     await expect(runButton).toBeFocused();
@@ -57,15 +62,18 @@ test.describe('accessibility', () => {
     await expect(page.getByTestId('research-report')).toBeVisible();
   });
 
-  test('the login overlay closes with Escape and returns focus to the page', async ({ page }) => {
+  test('the workspace overlay is a dialog and closes with Escape', async ({ page }) => {
     await page.goto('/');
-    const trigger = page.getByRole('button', { name: /sign in/i }).first();
-    if ((await trigger.count()) === 0) test.skip(true, 'the page has no sign-in control in this auth mode');
-    await trigger.click();
-    const overlay = page.getByRole('dialog');
-    await expect(overlay).toBeVisible();
+    await page.getByRole('button', { name: 'Workspace' }).click();
+
+    const dialog = page.getByRole('dialog', { name: 'Workspace' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveAttribute('aria-modal', 'true');
+    // Focus moves into the dialog rather than staying behind it.
+    await expect(dialog.getByRole('button', { name: 'Close' })).toBeFocused();
+
     await page.keyboard.press('Escape');
-    await expect(overlay).toBeHidden();
+    await expect(dialog).toBeHidden();
   });
 
   test('the page reports no uncaught errors while researching', async ({ page }) => {

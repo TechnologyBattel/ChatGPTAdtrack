@@ -313,6 +313,27 @@ Not verified, stated plainly:
 - **The browser-level flow was not executed.** Chromium could not be downloaded in this
   environment, so `e2e/` specs exist but their results are UNKNOWN.
 
+## 9a. Outbound request policy (SSRF)
+
+Every server-side provider call sets `redirect: 'error'`. The HubSpot token request carries
+`client_secret` and the refresh token in its body, and the Ads API request carries an API
+key in a header; following a 3xx would re-send those to whichever host answered. Nothing in
+either client needs a redirect, so a 3xx is treated as a failure.
+
+The provider base URLs (`ADS_API_BASE`, `EVENTS_API_BASE`, `HUBSPOT_API_BASE`,
+`HUBSPOT_TOKEN_PATH`) are operator configuration, not request input: no route accepts a URL
+from a caller. There is no crawler, scraper or user-supplied-URL fetcher in this product,
+which is why the review found no SSRF surface beyond provider redirects.
+
+## 9b. Request correlation and logging
+
+Every response carries `X-Request-Id` (an inbound value is reused only if it matches
+`[A-Za-z0-9_-]{8,64}`, otherwise one is generated). Each request produces exactly one log
+line with the id, method, route (query string stripped), status, duration and, when the
+request exceeded `SLOW_REQUEST_MS`, `slow: true`. Bodies, `Authorization` headers, tokens,
+query strings and provider payloads are never logged; `redactError()` scrubs token-shaped
+text before it reaches a log or a response. See `docs/OPERATIONS.md` §1.
+
 ## 10. Shutdown
 
 `SIGTERM`/`SIGINT` starts a drain rather than an immediate exit: new requests get

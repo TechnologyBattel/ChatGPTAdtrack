@@ -304,6 +304,20 @@ export function resolveConfig(env = {}) {
         scopesNote: 'read-only: crm.objects.contacts.read, crm.objects.deals.read',
       },
     },
+    observability: {
+      // `json` is what a log pipeline should receive; `text` is for a terminal. Production
+      // defaults to json so an alert can match fields rather than prose.
+      logFormat: (() => {
+        const raw = String(env.LOG_FORMAT ?? (isProduction ? 'json' : 'text'))
+          .trim()
+          .toLowerCase();
+        if (!['text', 'json'].includes(raw)) {
+          throw new ConfigError('LOG_FORMAT must be "text" or "json".');
+        }
+        return raw;
+      })(),
+      slowRequestMs: int(env.SLOW_REQUEST_MS, 2000, { min: 50, max: 120000, field: 'SLOW_REQUEST_MS' }),
+    },
     shutdown: {
       // How long in-flight requests get after SIGTERM before the process stops waiting.
       // Longer than the slowest provider call we accept (token exchange times out at 10s),

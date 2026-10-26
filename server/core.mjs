@@ -71,10 +71,14 @@ function requireKey(env, which) {
 
 async function request(url, init, env, attempts = 3) {
   const doFetch = env.fetchImpl ?? fetch;
+  // `redirect: 'error'` on purpose. These calls carry an API key in a header and the
+  // response body is trusted enough to render; a provider (or anything that can answer
+  // for it) must not be able to bounce the request somewhere else. Nothing in this client
+  // needs a redirect, so a 3xx is an error rather than a detour.
   let lastError;
   for (let i = 0; i < attempts; i++) {
     try {
-      const res = await doFetch(url, init);
+      const res = await doFetch(url, { redirect: 'error', ...init });
       if (res.status === 429 || res.status >= 500) {
         if (i < attempts - 1) {
           await new Promise((r) => setTimeout(r, 300 * 2 ** i));
