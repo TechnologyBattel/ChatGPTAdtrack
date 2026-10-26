@@ -135,10 +135,12 @@ function FindingCard({ finding }: { finding: Finding }) {
 function ReportView({ report, runId }: { report: ResearchReport; runId: string | null }) {
   const countRows = useMemo(
     () =>
-      Object.entries(report.counts).map(([key, value]) => ({
+      Object.entries(report.counts ?? {}).map(([key, value]) => ({
         key,
         value,
-        state: report.dataStates[key],
+        state: report.dataStates?.[key],
+        // A capped read is a lower bound; showing "12" there would be a made-up total.
+        lowerBound: (report.countsAreLowerBound ?? []).includes(key),
       })),
     [report],
   );
@@ -166,13 +168,15 @@ function ReportView({ report, runId }: { report: ResearchReport; runId: string |
 
       <Section
         title="What the server counted"
-        hint="A number here means the records exist. Where a figure could not be measured it says so instead."
+        hint="A number here means the records exist. A value shown as ≥ N is a minimum, because the read stopped at the store row cap. Where a figure could not be measured it says so instead."
       >
         <dl className="grid grid-cols-1 gap-1 sm:grid-cols-2">
           {countRows.map((row) => (
             <div key={row.key} className="flex items-baseline justify-between gap-2 rounded bg-[#fafbfc] px-2 py-1">
               <dt className="text-[11px] text-muted">{row.key.replace(/([A-Z])/g, ' $1').toLowerCase()}</dt>
-              <dd className="num text-[11px] text-ink">{stateLabel(row.state) ?? row.value}</dd>
+              <dd className="num text-[11px] text-ink">
+                {stateLabel(row.state) ?? (row.lowerBound ? `≥ ${row.value}` : row.value)}
+              </dd>
             </div>
           ))}
         </dl>
@@ -186,7 +190,7 @@ function ReportView({ report, runId }: { report: ResearchReport; runId: string |
           <p className="text-[11px] text-muted">No findings were produced for this workspace.</p>
         ) : (
           <ul className="space-y-2">
-            {report.findings.map((f) => (
+            {(report.findings ?? []).map((f) => (
               <FindingCard key={f.id} finding={f} />
             ))}
           </ul>
@@ -198,7 +202,7 @@ function ReportView({ report, runId }: { report: ResearchReport; runId: string |
         hint="Stated once so no figure above can be read as more than it is."
       >
         <ul className="space-y-1">
-          {report.limitations.map((l, i) => (
+          {(report.limitations ?? []).map((l, i) => (
             <li key={`lim-${i}`} className="text-[11px] leading-relaxed text-muted">
               — {l}
             </li>
@@ -249,6 +253,9 @@ function ConnectorCard({
         <Badge tone={tone}>{status.status.replace('_', ' ')}</Badge>
         {status.portalId && <Badge>portal {status.portalId}</Badge>}
         <Badge>{status.scopesGranted.length ? status.scopesGranted.join(', ') : 'no scopes granted'}</Badge>
+        {status.scopesVerified === false && <Badge tone="warn">scopes not reported by HubSpot</Badge>}
+        {status.syncInProgress && <Badge tone="warn">a sync is running</Badge>}
+        {status.syncStale && <Badge tone="warn">last sync did not finish</Badge>}
         {status.trustedForQualification ? (
           <Badge tone="ok">may qualify leads</Badge>
         ) : (
@@ -270,6 +277,12 @@ function ConnectorCard({
             )}
           </p>
 
+          {status.syncStale && (
+            <p className="mt-1 text-[11px] leading-relaxed text-[#8a6d00]">
+              The previous sync did not finish, so a sync now will take over from it. Counts may be incomplete until it
+              completes.
+            </p>
+          )}
           {status.lastError && (
             <p className="mt-1 rounded bg-[#fce8e6] px-2 py-1 text-[11px] text-[#b3261e]">
               {status.lastError.code}: {status.lastError.message}
@@ -654,6 +667,7 @@ export default function GuidedResearch({ onNeedSignIn }: { onNeedSignIn?: () => 
               lastError: null,
               qualifiedStages: [],
               nextAction: 'configure_server',
+              scopesVerified: false,
             }
           }
           canManage={canManageSources}

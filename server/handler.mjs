@@ -22,14 +22,21 @@ export const API_SECURITY_HEADERS = {
  * opts.trustProxy     number of our own proxy hops to skip from the right of XFF
  * opts.logger         optional
  */
-export function createRequestListener({ app, maxBodyBytes = 256 * 1024, trustProxy = 0, logger = console } = {}) {
+export function createRequestListener({
+  app,
+  maxBodyBytes = 256 * 1024,
+  trustProxy = 0,
+  logger = console,
+  draining = () => false,
+} = {}) {
   if (!app || typeof app.handle !== 'function') throw new Error('createRequestListener requires an app.');
 
   return async function listener(req, res) {
-    const send = (status, body) => {
+    const send = (status, body, extraHeaders = null) => {
       const payload = JSON.stringify(body);
       res.writeHead(status, {
         ...API_SECURITY_HEADERS,
+        ...(extraHeaders ?? {}),
         'Content-Type': 'application/json; charset=utf-8',
         'Content-Length': Buffer.byteLength(payload),
         // A body we refused to finish reading leaves unread bytes in the socket;
@@ -48,6 +55,14 @@ export function createRequestListener({ app, maxBodyBytes = 256 * 1024, trustPro
       url = new URL(req.url ?? '/', 'http://localhost');
     } catch {
       return send(400, { error: { code: 'bad_url', message: 'Malformed request URL.' } });
+    }
+
+    // During a drain the process is still answering, but it must stop being chosen: a
+    // load balancer reads 503 here and routes new work elsewhere, while the requests
+    // already in flight are allowed to finish.
+    if (draining()) {
+      res.setHeader('Connection', 'close');
+      return send(503, { error: { code: 'shutting_down', message: 'The server is shutting down.' } });
     }
 
     if (req.method === 'OPTIONS') {
@@ -77,12 +92,14 @@ export function createRequestListener({ app, maxBodyBytes = 256 * 1024, trustPro
         body,
         rawBody,
       });
-      return send(result.status, result.body);
+      return send(result.status, result.body, result.headers ?? null);
     } catch (error) {
       const e =
         error instanceof ApiError ? error : new ApiError(500, 'internal_error', String(error?.message ?? error));
       if (e.status >= 500) logger.error?.(`[api] ${e.code}: ${e.message}`);
-      return send(e.status, { error: { code: e.code, message: e.message } });
+      const retryAfter = Math.ceil(Number(e.retryAfterSeconds));
+      const headers = Number.isFinite(retryAfter) && retryAfter > 0 ? { 'Retry-After': String(retryAfter) } : null;
+      return send(e.status, { error: { code: e.code, message: e.message } }, headers);
     }
   };
 }

@@ -258,6 +258,7 @@ provider messages before they reach a log or a response.
 | Identity | Tenant from the path **and** the stored source row; the body can never choose an organization |
 | Idempotency | Each delivery re-reads the record and writes deterministic event ids, so a retry is a duplicate, not a second lead |
 | Scope | The connection must still be `connected`; a disconnected one is `409` |
+| Volume | At most `HUBSPOT_WEBHOOK_PER_MINUTE` deliveries (default 120) per connection per minute, counted in the store so the limit holds across instances; above it a `429 webhook_rate_limited` with `Retry-After`, and `connector.webhook_rate_limited` in the audit log |
 
 **Why a shared HMAC helper would be wrong.** Our ingest keys sign
 `timestamp.rawBody` in hex with a per-source secret. HubSpot signs method + URL + body +
@@ -299,8 +300,10 @@ Not verified, stated plainly:
   asserted structurally, not executed.
 - **No real ad account was contacted.** Push semantics are still unproven against the
   live API (see `docs/API.md`).
-- **Rate limiting is per instance.** Cloud Run with more than one replica multiplies the
-  effective limit; a shared counter is not implemented.
+- **Request rate limiting is per instance** (`/api/track`, `/api/session`, ingest). Cloud
+  Run with more than one replica multiplies the effective limit; a shared counter is not
+  implemented for those routes. The HubSpot webhook limit *is* shared, because it is
+  counted in the store — the one place where a runaway integration would be expensive.
 - **`firebase-admin` optionality is asserted structurally** (package.json + injected
   import failure), not by uninstalling it in a real deployment.
 - **No container build was run.** The Dockerfile's first real check is CI.
@@ -309,3 +312,13 @@ Not verified, stated plainly:
   signature; a real install (credentials, one sync, one delivery) is still UNKNOWN.
 - **The browser-level flow was not executed.** Chromium could not be downloaded in this
   environment, so `e2e/` specs exist but their results are UNKNOWN.
+
+## 10. Shutdown
+
+`SIGTERM`/`SIGINT` starts a drain rather than an immediate exit: new requests get
+`503 shutting_down` with `Connection: close` (so a load balancer stops choosing the
+instance), idle keep-alive sockets are closed immediately, and in-flight requests get
+`SHUTDOWN_TIMEOUT_MS` (default 15 s) to finish. If that deadline passes the process closes
+the remaining sockets, logs that some requests may not have completed, and exits non-zero,
+so a container platform can tell the difference between a clean drain and a truncated one.
+A second signal exits at once.

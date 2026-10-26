@@ -294,8 +294,22 @@ export function resolveConfig(env = {}) {
       publicBaseUrl,
       hubspot: {
         ...hubspot,
+        // Deliveries accepted per source per minute before answering 429. 0 disables the
+        // limiter, which is only reasonable in a single-tenant dev install.
+        webhookPerMinute: int(env.HUBSPOT_WEBHOOK_PER_MINUTE, 120, {
+          min: 0,
+          max: 100000,
+          field: 'HUBSPOT_WEBHOOK_PER_MINUTE',
+        }),
         scopesNote: 'read-only: crm.objects.contacts.read, crm.objects.deals.read',
       },
+    },
+    shutdown: {
+      // How long in-flight requests get after SIGTERM before the process stops waiting.
+      // Longer than the slowest provider call we accept (token exchange times out at 10s),
+      // shorter than the default container stop grace period (30s) so the platform's
+      // SIGKILL is never what ends a request.
+      timeoutMs: int(env.SHUTDOWN_TIMEOUT_MS, 15000, { min: 1000, max: 120000, field: 'SHUTDOWN_TIMEOUT_MS' }),
     },
     accountTimezone: env.ACCOUNT_TIMEZONE ?? 'Asia/Kolkata',
     firstPartySource: env.FIRST_PARTY_SOURCE || null,

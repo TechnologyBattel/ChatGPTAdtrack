@@ -19,7 +19,14 @@
     "format:check": "prettier --check .",
     "test:watch": "vitest",
     "set-role": "node scripts/set-role.mjs",
-    "e2e": "playwright test"
+    "e2e": "playwright test",
+    "supply-chain": "node scripts/supply-chain.mjs all --check",
+    "sbom": "node scripts/supply-chain.mjs sbom",
+    "licenses": "node scripts/supply-chain.mjs license",
+    "notices": "node scripts/supply-chain.mjs notices",
+    "audit": "node scripts/supply-chain.mjs audit",
+    "e2e:preflight": "node scripts/check-e2e-browser.mjs",
+    "load:smoke": "node scripts/load-smoke.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.104.5",
@@ -41,13 +48,13 @@
     "eslint-plugin-react-refresh": "^0.4.16",
     "globals": "^15.14.0",
     "jsdom": "^25.0.1",
-    "postcss": "8.4.49",
+    "postcss": "^8.5.31",
     "prettier": "^3.4.2",
     "tailwindcss": "3.4.17",
     "typescript": "5.7.2",
     "typescript-eslint": "^8.18.2",
-    "vite": "6.0.7",
-    "vitest": "2.1.8"
+    "vite": "^6.4.5",
+    "vitest": "^5.0.5"
   },
   "engines": {
     "node": ">=22.0.0",
@@ -55,6 +62,6 @@
   },
   "optionalDependencies": {
     "@hubspot/api-client": "^14.0.1",
-    "firebase-admin": "13.0.2"
+    "firebase-admin": "^13.10.0"
   }
 }

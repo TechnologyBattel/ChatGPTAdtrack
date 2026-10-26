@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createRequestListener } from '../../../server/handler.mjs';
+import { ApiError } from '../../../server/errors.mjs';
 
 type Captured = { ip: string; headers: Record<string, string>; body: unknown };
 
@@ -19,19 +20,24 @@ afterEach(async () => {
   server = null;
 });
 
+type Respond = (captured: Captured) => { status: number; body: unknown; headers?: Record<string, string> };
+
 async function mount({
   maxBodyBytes = 1024,
   trustProxy = 0,
-  respond = (captured: Captured) => ({ status: 200, body: { ip: captured.ip } }),
+  respond = (captured: Captured): { status: number; body: unknown } => ({ status: 200, body: { ip: captured.ip } }),
+  draining = () => false,
 }: {
   maxBodyBytes?: number;
   trustProxy?: number;
-  respond?: (captured: Captured) => { status: number; body: unknown };
+  respond?: Respond;
+  draining?: () => boolean;
 } = {}) {
   server = http.createServer(
     createRequestListener({
       maxBodyBytes,
       trustProxy,
+      draining,
       logger: { error: () => {} },
       app: {
         async handle(req: unknown) {
@@ -187,5 +193,94 @@ describe('response headers', () => {
       req.end();
     });
     expect(status).toBe(204);
+  });
+});
+
+describe('shutdown drain (gap F2)', () => {
+  const get = (port: number, path = '/api/health') =>
+    new Promise<{ status: number; headers: http.IncomingHttpHeaders; body: any }>((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, method: 'GET', path }, (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => (body += chunk));
+        res.on('end', () =>
+          resolve({ status: res.statusCode ?? 0, headers: res.headers, body: body ? JSON.parse(body) : null }),
+        );
+      });
+      req.on('error', reject);
+      req.end();
+    });
+
+  it('answers 503 to new work once draining, so a load balancer stops choosing it', async () => {
+    let draining = false;
+    const { port } = await mount({ draining: () => draining });
+    expect((await get(port)).status).toBe(200);
+
+    draining = true;
+    const res = await get(port);
+    expect(res.status).toBe(503);
+    expect(res.body.error.code).toBe('shutting_down');
+    expect(res.headers.connection).toBe('close');
+  });
+
+  it('still serves a request that was already accepted when the drain began', async () => {
+    // The gate is checked when the request arrives, not when the response is written, so
+    // work in flight at SIGTERM is allowed to finish rather than being truncated.
+    let draining = false;
+    let release: (value: { status: number; body: unknown }) => void = () => {};
+    const gate = new Promise<{ status: number; body: unknown }>((resolve) => {
+      release = resolve;
+    });
+    const { port } = await mount({
+      draining: () => draining,
+      respond: () => gate as unknown as { status: number; body: unknown },
+    });
+
+    const inFlight = get(port, '/api/health');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    draining = true;
+    release({ status: 200, body: { ok: true } });
+
+    const res = await inFlight;
+    expect(res.status).toBe(200);
+    expect(res.body.ok).toBe(true);
+  });
+});
+
+describe('Retry-After propagation (gap A3)', () => {
+  const get = (port: number) =>
+    new Promise<{ status: number; headers: http.IncomingHttpHeaders; body: any }>((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, method: 'GET', path: '/api/anything' }, (res) => {
+        let body = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => (body += chunk));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: JSON.parse(body) }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+
+  it('turns a route-supplied retry hint into a Retry-After header', async () => {
+    const { port } = await mount({
+      respond: () => {
+        const error = new ApiError(429, 'rate_limited', 'Slow down.') as ApiError & { retryAfterSeconds: number };
+        error.retryAfterSeconds = 12.4;
+        throw error;
+      },
+    });
+    const res = await get(port);
+    expect(res.status).toBe(429);
+    expect(res.headers['retry-after']).toBe('13');
+  });
+
+  it('omits Retry-After when the route has no hint', async () => {
+    const { port } = await mount({
+      respond: () => {
+        throw new ApiError(400, 'bad_request', 'Nope.');
+      },
+    });
+    const res = await get(port);
+    expect(res.status).toBe(400);
+    expect(res.headers['retry-after']).toBeUndefined();
   });
 });

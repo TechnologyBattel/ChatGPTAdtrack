@@ -482,7 +482,24 @@ export function createApp({
         const e = error instanceof ApiError ? error : new ApiError(500, 'internal_error', String(error));
         const status = e.status >= 400 && e.status < 600 ? e.status : 500;
         if (status >= 500) logger.error?.(`[api] ${e.code}: ${e.message}`);
-        return { status, body: { error: { code: e.code, message: e.message } } };
+        // A 429 without Retry-After tells the caller to back off but not how far. Only
+        // present when the route knows, so other error bodies are unchanged.
+        const retryAfterSeconds = Number(e.retryAfterSeconds);
+        const headers =
+          Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+            ? { 'Retry-After': String(Math.ceil(retryAfterSeconds)) }
+            : undefined;
+        return {
+          status,
+          headers,
+          body: {
+            error: {
+              code: e.code,
+              message: e.message,
+              ...(headers ? { retryAfterSeconds: Math.ceil(retryAfterSeconds) } : {}),
+            },
+          },
+        };
       }
     },
   };

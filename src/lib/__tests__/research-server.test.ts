@@ -104,6 +104,17 @@ describe('buildResearchReport', () => {
     expect(report.dataStates.qualification).toBe('no_data');
   });
 
+  it('marks capped totals as lower bounds instead of reporting them as exact', () => {
+    const events = Array.from({ length: 5 }, (_, i) => event(`e${i}`, 'landing_visit', NOW - DAY));
+    const report = buildResearchReport({ workspace, events, now, truncated: ['events'] });
+    expect(report.counts.events).toBe(5);
+    expect(report.countsAreLowerBound).toEqual(['events']);
+    const finding = report.findings.find((f) => f.id === 'data.truncated');
+    expect(finding).toBeTruthy();
+    expect(finding?.severity).toBe('attention');
+    expect(report.limitations.join(' ')).toMatch(/lower bounds/);
+  });
+
   it('ranks the chosen goal first, then by severity', () => {
     const report = buildResearchReport({
       workspace,
@@ -278,6 +289,43 @@ describe('createResearch', () => {
     const actions = audit.map((a) => a.action);
     expect(actions).toContain('research.run');
     expect(actions).toContain('research.delete');
+  });
+
+  it('knows when its own read was capped, and says the totals are minimums', async () => {
+    const store = createMemoryStore({ now });
+    const tenancy = createTenancy({ store, now });
+    const research = createResearch({ store, tenancy, now, aggregateLimit: 2 });
+    const org = await tenancy.createOrg(owner, { name: 'Agency A' });
+    const ws = await tenancy.createWorkspace(owner, org.organizationId, {
+      name: 'Acme India',
+      clientName: 'Acme',
+      timeZone: 'Asia/Kolkata',
+      currency: 'INR',
+      defaultLanguage: 'en-IN',
+      targetMarkets: [{ countryCode: 'IN' }],
+    });
+    for (let i = 0; i < 3; i += 1) {
+      await store.records.put(
+        'events',
+        `ev_${i}`,
+        {
+          workspaceId: ws.workspaceId,
+          eventType: 'landing_visit',
+          occurredAt: NOW - DAY,
+        },
+        { orgId: org.organizationId },
+      );
+    }
+
+    const run = await research.create({
+      principal: owner,
+      organizationId: org.organizationId,
+      workspaceId: ws.workspaceId,
+      body: { goal: 'attribution' },
+    });
+    expect(run.report.countsAreLowerBound).toContain('events');
+    expect(run.report.counts.events).toBe(2);
+    expect(run.report.findings.map((f) => f.id)).toContain('data.truncated');
   });
 
   it('requires research.write to save or delete and refuses another organization entirely', async () => {

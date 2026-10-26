@@ -45,6 +45,11 @@ const CONTACT_PROPERTIES = ['createdate', 'hs_lastmodifieddate', 'country', 'lif
 const DEAL_PROPERTIES = ['dealstage', 'hs_lastmodifieddate', 'closedate', 'hs_object_id'];
 
 const STATE_TTL_MS = 10 * 60 * 1000;
+// A sync lease must outlive one page fetch and a backoff, and it is renewed after every
+// page, so a short lease is safe: if an instance dies, another takes over in minutes
+// instead of waiting for a wall-clock heuristic to expire.
+const SYNC_LEASE_MS = 2 * 60 * 1000;
+const TOKEN_REQUEST_TIMEOUT_MS = 15 * 1000;
 const WEBHOOK_TOLERANCE_MS = 5 * 60 * 1000; // HubSpot's documented v3 window
 const SKEW_BEFORE_REFRESH_MS = 60 * 1000;
 
@@ -66,6 +71,12 @@ const iso2 = (value) => {
  * nothing else: retry what is transient, stop on what is not, and never retry auth.
  */
 export function classifyProviderError(error) {
+  // An error that already carries a classification keeps it. Re-classifying a wrapped
+  // ApiError by its *HTTP status* (502) would turn a permanent 404 into a retryable
+  // failure, and the webhook would ask HubSpot to retry something that will never exist.
+  if (typeof error?.retryable === 'boolean' && typeof error?.kind === 'string') {
+    return { code: error.code ?? 'hubspot_error', retryable: error.retryable, kind: error.kind };
+  }
   const status = Number(error?.status ?? error?.response?.status ?? 0);
   if (status === 429) return { code: 'hubspot_rate_limited', retryable: true, kind: 'rate_limit' };
   if (status === 401) return { code: 'hubspot_auth_rejected', retryable: false, kind: 'auth' };
@@ -107,6 +118,11 @@ export function createHubSpotConnector({
   const maxPages = Math.min(200, Math.max(1, Number(limits.maxPages ?? 20)));
   const maxAttempts = Math.min(6, Math.max(1, Number(limits.maxAttempts ?? 3)));
   const baseDelayMs = Math.max(1, Number(limits.baseDelayMs ?? 250));
+  // Deliveries accepted per source per window. HubSpot batches up to 100 events per
+  // delivery and retries on 429, so this bounds the work one connection can create without
+  // getting in the way of normal traffic. Set to 0 to disable (documented, not silent).
+  const webhookLimit = Math.max(0, Number(limits.webhookPerMinute ?? 120));
+  const webhookWindowMs = 60_000;
 
   const configured = Boolean(encryptionKey && oauth.clientId && oauth.clientSecret && oauth.redirectUri);
   const missingConfig = [
@@ -182,6 +198,10 @@ export function createHubSpotConnector({
     }
     const auth = source.auth ?? null;
     const status = source.connectionStatus ?? 'not_connected';
+    // A `syncing` status with an expired lease is what a crashed instance leaves behind.
+    // It is reported as stale rather than as work in progress, because nothing is running.
+    const leaseActive = Boolean(source.lease && Number(source.lease.expiresAt) > now());
+    const syncStale = status === 'syncing' && !leaseActive;
     return {
       provider: CONNECTOR_PROVIDER,
       configured,
@@ -190,8 +210,14 @@ export function createHubSpotConnector({
       connected: status === 'connected' || status === 'syncing' || status === 'degraded',
       sourceConnectionId: source.sourceConnectionId,
       trustedForQualification: Boolean(source.trustedForQualification),
+      // Exactly the scopes the provider reported. `scopesVerified: false` means it did not
+      // report any, which is not the same as "granted everything we asked for".
       scopesGranted: auth?.scopes ?? [],
+      scopesVerified: Boolean(auth?.scopesVerified),
       portalId: auth?.portalId ?? null,
+      syncInProgress: leaseActive,
+      syncLeaseExpiresAt: leaseActive ? source.lease.expiresAt : null,
+      syncStale,
       // `null` is "never synced", not an epoch and not now.
       lastSyncAt: source.lastSyncAt ?? null,
       lastSyncStatus: source.lastSyncStatus ?? null,
@@ -199,8 +225,9 @@ export function createHubSpotConnector({
       checkpoint: source.checkpoint ?? null,
       lastError: source.lastError ?? null,
       qualifiedStages: source.qualifiedStages ?? [],
-      nextAction:
-        status === 'failed'
+      nextAction: syncStale
+        ? 'run_sync'
+        : status === 'failed'
           ? 'reconnect'
           : status === 'degraded'
             ? 'run_sync'
@@ -267,9 +294,18 @@ export function createHubSpotConnector({
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded' },
         body: body.toString(),
+        // A hung provider must not hold a request open until the platform kills it.
+        signal: AbortSignal.timeout(Number(oauth.requestTimeoutMs ?? TOKEN_REQUEST_TIMEOUT_MS)),
       });
     } catch (error) {
-      throw new ApiError(502, 'hubspot_unreachable', `HubSpot token endpoint unreachable: ${redactError(error)}`);
+      const timedOut = error?.name === 'TimeoutError' || error?.name === 'AbortError';
+      throw new ApiError(
+        timedOut ? 504 : 502,
+        timedOut ? 'hubspot_token_timeout' : 'hubspot_unreachable',
+        timedOut
+          ? `HubSpot token endpoint did not answer within ${oauth.requestTimeoutMs ?? TOKEN_REQUEST_TIMEOUT_MS} ms.`
+          : `HubSpot token endpoint unreachable: ${redactError(error)}`,
+      );
     }
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -313,11 +349,15 @@ export function createHubSpotConnector({
           sealedAccessToken: seal(refreshed.accessToken, encryptionKey, { aad }),
           sealedRefreshToken: seal(refreshed.refreshToken, encryptionKey, { aad }),
           expiresAt: refreshed.expiresAt,
-          scopes: refreshed.scopes ?? source.auth?.scopes ?? HUBSPOT_SCOPES,
+          // Exactly what the provider reported. A refresh that returns no scope list
+          // keeps the previous *observed* list; it never falls back to the requested one.
+          scopes: refreshed.scopes ?? source.auth?.scopes ?? [],
           portalId: refreshed.portalId ?? source.auth?.portalId ?? null,
           tokenVersion: 'v1',
         },
-        connectionStatus: 'connected',
+        // Deliberately no `connectionStatus` write: a refresh happens *inside* a sync or a
+        // webhook, and writing 'connected' there would erase 'syncing', and could undo a
+        // disconnect that landed while the refresh was in flight.
         lastError: null,
       },
       { orgId: source.organizationId },
@@ -428,16 +468,33 @@ export function createHubSpotConnector({
       // not exist, so a probe cannot confirm that a tenant exists.
       throw new ApiError(400, 'invalid_state', 'That connection attempt is not valid for this workspace.');
     }
-    if (stateRecord.usedAt) throw new ApiError(400, 'state_already_used', 'That connection attempt was already used.');
     if (stateRecord.expiresAt < now()) throw new ApiError(400, 'state_expired', 'That connection attempt expired.');
     if (stateRecord.userId !== principal.uid) {
       throw new ApiError(403, 'forbidden', 'This connection attempt was started by a different user.');
     }
 
     const source = await requireSource(organizationId, workspaceId, stateRecord.sourceConnectionId);
-    // Spend the state before the exchange: a failed exchange must not leave a replayable
-    // code behind, and the user can restart from the connect screen.
-    await store.records.update('oauthStates', state, { usedAt: now() });
+
+    /**
+     * Spend the state atomically, *before* the exchange.
+     *
+     * Two callbacks may arrive with the same valid state (a double-click, a provider
+     * retry, two instances behind a load balancer). A read-then-write would let both pass
+     * the check and both exchange the code. `consumeOnce` is a single transaction, so
+     * exactly one caller gets `consumed: true`; the other is refused here, before any
+     * provider call.
+     */
+    const claim = await store.records.consumeOnce('oauthStates', state, {
+      at: now(),
+      expect: { organizationId, workspaceId, userId: principal.uid },
+    });
+    if (!claim.consumed) {
+      if (claim.reason === 'already_used') {
+        throw new ApiError(400, 'state_already_used', 'That connection attempt was already used.');
+      }
+      // not_found or mismatch: both are "not yours", and both look the same on purpose.
+      throw new ApiError(400, 'invalid_state', 'That connection attempt is not valid for this workspace.');
+    }
 
     let tokens;
     try {
@@ -463,6 +520,42 @@ export function createHubSpotConnector({
       throw error;
     }
 
+    // The scopes we hold are the ones the provider *reported*, never the ones we asked
+    // for. Requesting a scope is not a grant, and reporting it as one is a lie the UI
+    // would repeat.
+    const grantedScopes = Array.isArray(tokens.scopes) ? tokens.scopes : [];
+    const missingScopes =
+      tokens.scopes === null ? [] : HUBSPOT_SCOPES.filter((scope) => !grantedScopes.includes(scope));
+    if (missingScopes.length > 0) {
+      const failed = await store.records.update(
+        'sources',
+        source.sourceConnectionId,
+        {
+          connectionStatus: 'failed',
+          auth: null,
+          lastError: {
+            code: 'hubspot_scope_rejected',
+            message: `HubSpot granted a narrower scope set than required; missing: ${missingScopes.join(', ')}.`,
+            at: now(),
+          },
+        },
+        { orgId: organizationId },
+      );
+      await audit({
+        action: 'connector.connect',
+        source: failed,
+        principal,
+        actorRole: ctx.role,
+        ok: false,
+        detail: { error: 'hubspot_scope_rejected', missingScopes },
+      });
+      throw new ApiError(
+        502,
+        'hubspot_scope_rejected',
+        `HubSpot granted a narrower scope set than required; missing: ${missingScopes.join(', ')}.`,
+      );
+    }
+
     const aad = aadFor(source);
     const updated = await store.records.update(
       'sources',
@@ -473,7 +566,10 @@ export function createHubSpotConnector({
           sealedAccessToken: seal(tokens.accessToken, encryptionKey, { aad }),
           sealedRefreshToken: seal(tokens.refreshToken, encryptionKey, { aad }),
           expiresAt: tokens.expiresAt,
-          scopes: tokens.scopes ?? HUBSPOT_SCOPES,
+          scopes: grantedScopes,
+          // `null` scope list means the provider did not say. Recorded as unverified
+          // rather than quietly assumed to be complete.
+          scopesVerified: tokens.scopes !== null,
           portalId: tokens.portalId,
           tokenVersion: 'v1',
         },
@@ -593,7 +689,27 @@ export function createHubSpotConnector({
     return { next: page?.paging?.next?.after ?? null, count: results.length };
   }
 
-  async function importObject({ source, client, objectType, checkpoint, signal, totals }) {
+  /**
+   * Renew the lease after every page. If the lease is gone, this sync must stop: another
+   * holder owns the connection and whatever we wrote next would race it.
+   */
+  async function renewOrAbort({ source, holder }) {
+    const renewed = await store.records.renewLease('sources', source.sourceConnectionId, {
+      orgId: source.organizationId,
+      at: now(),
+      ttlMs: SYNC_LEASE_MS,
+      holder,
+    });
+    if (!renewed.renewed) {
+      throw new ApiError(
+        409,
+        'sync_lock_lost',
+        'The sync lease was lost (it expired or was taken over); this run stopped without writing its checkpoint.',
+      );
+    }
+  }
+
+  async function importObject({ source, client, objectType, checkpoint, signal, totals, onPage = null }) {
     let after = checkpoint?.[objectType]?.after ?? null;
     let pages = 0;
     // Not complete until a page reports that there is no next cursor.
@@ -611,6 +727,7 @@ export function createHubSpotConnector({
       pages += 1;
       after = next;
       complete = !after;
+      if (onPage) await onPage();
       if (!after || count === 0) break;
     }
     return { after, pages, complete };
@@ -630,21 +747,49 @@ export function createHubSpotConnector({
     const ctx = await tenancy.context(principal, organizationId, 'source.manage');
     await tenancy.workspace(organizationId, workspaceId, { role: ctx.role });
     requireConfigured();
-    let source = await requireSource(organizationId, workspaceId, sourceConnectionId);
-    if (source.connectionStatus === 'disconnected') {
+    const existing = await requireSource(organizationId, workspaceId, sourceConnectionId);
+    if (existing.connectionStatus === 'disconnected') {
       throw new ApiError(409, 'connector_disconnected', 'This connection is disconnected. Reconnect to import again.');
     }
 
-    if (source.connectionStatus === 'syncing' && now() - (source.syncStartedAt ?? 0) < 10 * 60 * 1000) {
-      throw new ApiError(409, 'sync_in_progress', 'A sync is already running for this connection.');
+    /**
+     * Take the sync lease, atomically.
+     *
+     * The previous implementation read `connectionStatus`, decided nobody was syncing,
+     * and *then* wrote `syncing`. Two concurrent requests both read "connected" and both
+     * imported. The lease is a single atomic operation in the store (a Firestore
+     * transaction in production), so exactly one caller can hold it; the other gets a
+     * deterministic conflict instead of a second import and a clobbered checkpoint.
+     */
+    const holder = `sync_${randomBytes(9).toString('base64url')}`;
+    const acquired = await store.records.acquireLease('sources', existing.sourceConnectionId, {
+      orgId: organizationId,
+      at: now(),
+      ttlMs: SYNC_LEASE_MS,
+      holder,
+      patch: { connectionStatus: 'syncing', syncStartedAt: now() },
+    });
+    if (!acquired.acquired) {
+      if (acquired.reason === 'not_found') {
+        throw new ApiError(404, 'not_found', 'No HubSpot connection for this workspace.');
+      }
+      const retryAfterMs = Math.max(1000, Number(acquired.lease?.expiresAt ?? now()) - now());
+      const conflict = new ApiError(409, 'sync_in_progress', 'A sync is already running for this connection.');
+      conflict.retryAfterMs = retryAfterMs;
+      throw conflict;
     }
-
-    source = await store.records.update(
-      'sources',
-      source.sourceConnectionId,
-      { connectionStatus: 'syncing', syncStartedAt: now() },
-      { orgId: organizationId },
-    );
+    const source = acquired.doc;
+    if (acquired.tookOver) {
+      // A previous holder stopped before releasing the lease (crash, eviction). Say so in
+      // the audit trail: a takeover is a recovery event, not a normal start.
+      await audit({
+        action: 'connector.sync_takeover',
+        source,
+        principal,
+        actorRole: ctx.role,
+        detail: { reason: 'expired_lease', previousExpiresAt: acquired.lease?.expiresAt ?? null },
+      });
+    }
 
     const totals = { imported: 0, duplicates: 0, skipped: 0, skippedReasons: {}, pages: 0 };
     const startedAt = now();
@@ -656,11 +801,28 @@ export function createHubSpotConnector({
       const checkpoint = source.checkpoint ?? {};
       const nextCheckpoint = { ...checkpoint };
 
-      const contacts = await importObject({ source, client, objectType: 'contacts', checkpoint, signal, totals });
+      const onPage = () => renewOrAbort({ source: { ...source, organizationId }, holder });
+      const contacts = await importObject({
+        source,
+        client,
+        objectType: 'contacts',
+        checkpoint,
+        signal,
+        totals,
+        onPage,
+      });
       nextCheckpoint.contacts = { after: contacts.after, complete: contacts.complete };
       totals.pages += contacts.pages;
 
-      const deals = await importObject({ source, client, objectType: 'deals', checkpoint, signal, totals });
+      const deals = await importObject({
+        source,
+        client,
+        objectType: 'deals',
+        checkpoint,
+        signal,
+        totals,
+        onPage,
+      });
       nextCheckpoint.deals = { after: deals.after, complete: deals.complete };
       totals.pages += deals.pages;
 
@@ -698,14 +860,97 @@ export function createHubSpotConnector({
       };
     }
 
-    const updated = await store.records.update('sources', source.sourceConnectionId, outcome, {
+    if (outcome.lastError?.code === 'sync_lock_lost') {
+      // The events we stored are real (they are idempotent), but the checkpoint and the
+      // status are not ours to write any more. Report the truth instead of a success —
+      // and name the reason, because "disconnected" and "another worker took over" lead
+      // to different operator actions.
+      const current = await requireSource(organizationId, workspaceId, source.sourceConnectionId);
+      const disconnected = current?.connectionStatus === 'disconnected';
+      return {
+        status: disconnected ? 'disconnected' : 'failed',
+        lastSyncStatus: 'failed',
+        partial: totals.imported + totals.duplicates > 0,
+        trigger,
+        startedAt,
+        finishedAt: now(),
+        imported: totals.imported,
+        duplicates: totals.duplicates,
+        skipped: totals.skipped,
+        skippedReasons: totals.skippedReasons,
+        pages: totals.pages,
+        countsSemantics: 'unique events stored; a duplicate is one the server already had',
+        error: disconnected
+          ? {
+              code: 'connection_disconnected',
+              message: 'The connection was disconnected while this sync was running, so its result was not applied.',
+            }
+          : outcome.lastError,
+        applied: false,
+        connection: safeView(current),
+      };
+    }
+
+    /**
+     * Release the lease and write the result in one atomic step. `unless` runs inside
+     * that step: if the connection was disconnected while this sync was running, the
+     * outcome is dropped and the disconnect stands. A sync must never resurrect an
+     * account whose credentials were erased.
+     */
+    const released = await store.records.releaseLease('sources', source.sourceConnectionId, {
       orgId: organizationId,
+      at: now(),
+      holder,
+      patch: outcome,
+      unless: (record) => record.connectionStatus !== 'disconnected',
     });
+
+    if (!released.released) {
+      // Why the lease is gone changes what the operator should do: a disconnect is a
+      // decision, a lost lease is a race. Report the real reason, not a generic one.
+      const current = released.doc ?? (await requireSource(organizationId, workspaceId, source.sourceConnectionId));
+      const disconnected = current?.connectionStatus === 'disconnected';
+      return {
+        status: disconnected ? 'disconnected' : 'failed',
+        lastSyncStatus: 'failed',
+        partial: totals.imported + totals.duplicates > 0,
+        trigger,
+        startedAt,
+        finishedAt: now(),
+        imported: totals.imported,
+        duplicates: totals.duplicates,
+        skipped: totals.skipped,
+        skippedReasons: totals.skippedReasons,
+        pages: totals.pages,
+        countsSemantics: 'unique events stored; a duplicate is one the server already had',
+        error: disconnected
+          ? {
+              code: 'connection_disconnected',
+              message: 'The connection was disconnected while this sync was running, so its result was not applied.',
+            }
+          : { code: 'sync_lock_lost', message: 'The sync lease was lost before the result could be written.' },
+        applied: false,
+        connection: safeView(current),
+      };
+    }
+
+    const updated = released.doc;
+    const appliedOutcome = released.applied
+      ? outcome
+      : {
+          lastSyncStatus: 'failed',
+          lastError: {
+            code: 'connection_disconnected',
+            message: 'The connection was disconnected while this sync was running, so its result was not applied.',
+            at: now(),
+          },
+        };
 
     const summary = {
       status: updated.connectionStatus,
-      lastSyncStatus: updated.lastSyncStatus,
-      partial: Boolean(outcome.partial),
+      lastSyncStatus: appliedOutcome.lastSyncStatus,
+      partial: Boolean(appliedOutcome.partial),
+      applied: released.applied,
       trigger,
       startedAt,
       finishedAt: updated.lastSyncAt ?? now(),
@@ -715,7 +960,7 @@ export function createHubSpotConnector({
       skippedReasons: totals.skippedReasons,
       pages: totals.pages,
       countsSemantics: 'unique events stored; a duplicate is one the server already had',
-      error: updated.lastError ?? null,
+      error: appliedOutcome.lastError ?? null,
     };
 
     await audit({
@@ -731,6 +976,7 @@ export function createHubSpotConnector({
         duplicates: summary.duplicates,
         skipped: summary.skipped,
         pages: summary.pages,
+        applied: summary.applied,
         error: summary.error?.code ?? null,
       },
     });
@@ -751,6 +997,9 @@ export function createHubSpotConnector({
         // disconnected account is a liability with no upside.
         auth: null,
         checkpoint: null,
+        // Any in-flight sync now owns nothing: its release is refused, so it cannot write
+        // a status or a checkpoint over this disconnect.
+        lease: null,
         disconnectedAt: now(),
         lastError: null,
       },
@@ -802,6 +1051,37 @@ export function createHubSpotConnector({
       throw new ApiError(409, 'connector_disconnected', 'This connection is disconnected.');
     }
 
+    // Per-source rate limit, checked before any provider work is done. The signature has
+    // already been verified, so an attacker cannot spend another tenant's budget; and
+    // because the counter is a store record, the limit holds across instances rather than
+    // per process.
+    if (webhookLimit > 0) {
+      const window = await store.records.bumpCounter('rateLimits', `hubspot-webhook:${sourceConnectionId}`, {
+        orgId: organizationId,
+        at: now(),
+        windowMs: webhookWindowMs,
+        limit: webhookLimit,
+      });
+      if (!window.allowed) {
+        const retryAfterSeconds = Math.max(1, Math.ceil((window.resetAt - now()) / 1000));
+        const limited = new ApiError(
+          429,
+          'webhook_rate_limited',
+          `This connection sent more than ${webhookLimit} webhook deliveries in a minute; HubSpot should retry after ${retryAfterSeconds}s.`,
+        );
+        limited.retryAfterSeconds = retryAfterSeconds;
+        limited.rateLimit = { limit: webhookLimit, count: window.count, resetAt: window.resetAt };
+        // Audited once per rejected delivery: a silent 429 is invisible in an incident.
+        await audit({
+          action: 'connector.webhook_rate_limited',
+          source,
+          ok: false,
+          detail: { limit: webhookLimit, count: window.count, resetAt: window.resetAt },
+        });
+        throw limited;
+      }
+    }
+
     let entries;
     try {
       entries = JSON.parse(rawBody);
@@ -814,6 +1094,10 @@ export function createHubSpotConnector({
     }
 
     const totals = { imported: 0, duplicates: 0, skipped: 0 };
+    // A provider outage is not the same as a record we chose to skip. If a read fails for
+    // a retryable reason we answer 5xx so HubSpot retries the delivery; answering 200
+    // would drop the record silently.
+    let retryableFailures = 0;
     const { accessToken } = await accessTokenFor(source);
     const client = await clientFactory(accessToken, {});
 
@@ -845,9 +1129,33 @@ export function createHubSpotConnector({
         }
         const result = await ingest.ingest({ source, body: mapped.event });
         totals[result.duplicate ? 'duplicates' : 'imported'] += 1;
-      } catch {
+      } catch (error) {
         totals.skipped += 1;
+        if (classifyProviderError(error).retryable) retryableFailures += 1;
       }
+    }
+
+    if (retryableFailures > 0) {
+      const failure = new ApiError(
+        502,
+        'webhook_partial_failure',
+        `HubSpot could not be read for ${retryableFailures} of ${entries.length} event(s); HubSpot should retry this delivery.`,
+      );
+      failure.partial = { received: entries.length, ...totals, retryableFailures };
+      // The audit still records what did land, because "we imported 3 of 50" is the fact
+      // an operator needs after an incident.
+      await audit({
+        action: 'connector.webhook',
+        source,
+        ok: false,
+        detail: {
+          events: entries.length,
+          imported: totals.imported,
+          duplicates: totals.duplicates,
+          retryableFailures,
+        },
+      });
+      throw failure;
     }
 
     await audit({

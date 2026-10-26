@@ -687,6 +687,76 @@ describe('webhooks', () => {
   });
 });
 
+describe('webhook rate limiting', () => {
+  const sign = (secret: string, method: string, url: string, body: string, timestamp: string) =>
+    createHmac('sha256', secret).update(`${method}${url}${body}${timestamp}`).digest('base64');
+
+  async function setup(webhookPerMinute: number) {
+    const h = harness({ connectorOptions: { limits: { webhookPerMinute } } });
+    const org = await h.seedOrg();
+    await h.connect(org);
+    const source = await h.sourceOf(org);
+    const fullUrl = `https://api.test/api/connectors/hubspot/webhook/${org.organizationId}/${source.sourceConnectionId}`;
+    return { h, org, source, fullUrl };
+  }
+
+  const deliver = (h: any, org: any, source: any, fullUrl: string) => {
+    const body = JSON.stringify([{ objectTypeId: '0-1', objectId: 'c1' }]);
+    const timestamp = String(NOW);
+    return h.hubspot.webhook({
+      organizationId: org.organizationId,
+      sourceConnectionId: source.sourceConnectionId,
+      headers: {
+        'x-hubspot-signature-v3': sign('test-client-secret', 'POST', fullUrl, body, timestamp),
+        'x-hubspot-request-timestamp': timestamp,
+      },
+      rawBody: body,
+      url: fullUrl,
+    });
+  };
+
+  it('accepts up to the limit, then answers 429 with a retry hint', async () => {
+    const { h, org, source, fullUrl } = await setup(2);
+    await expect(deliver(h, org, source, fullUrl)).resolves.toMatchObject({ received: 1 });
+    await expect(deliver(h, org, source, fullUrl)).resolves.toMatchObject({ received: 1 });
+
+    const rejected = await deliver(h, org, source, fullUrl).catch((error: any) => error);
+    expect(rejected).toMatchObject({ status: 429, code: 'webhook_rate_limited' });
+    expect(rejected.retryAfterSeconds).toBeGreaterThan(0);
+    expect(rejected.rateLimit).toMatchObject({ limit: 2 });
+
+    // The rejection is auditable: an incident review needs to know deliveries were dropped.
+    const log = await h.store.records.list('auditLog', { orgId: org.organizationId });
+    expect(log.some((row: any) => row.action === 'connector.webhook_rate_limited')).toBe(true);
+  });
+
+  it('keeps a separate budget per source, so one connection cannot starve another', async () => {
+    const { h, org, source, fullUrl } = await setup(1);
+    await expect(deliver(h, org, source, fullUrl)).resolves.toBeTruthy();
+    await expect(deliver(h, org, source, fullUrl)).rejects.toMatchObject({ status: 429 });
+
+    // The budget is keyed by source connection, so a second connection in the same
+    // organization starts a fresh window instead of inheriting a drained one.
+    const counter = await h.store.records.get('rateLimits', `hubspot-webhook:${source.sourceConnectionId}`, {
+      orgId: org.organizationId,
+    });
+    expect(counter).toMatchObject({ count: 2, windowStart: NOW });
+    const otherSource = await h.store.records.get('rateLimits', 'hubspot-webhook:some_other_source', {
+      orgId: org.organizationId,
+    });
+    expect(otherSource).toBeNull();
+  });
+
+  it('resets the window when it expires', async () => {
+    const { h, org, source, fullUrl } = await setup(1);
+    await expect(deliver(h, org, source, fullUrl)).resolves.toBeTruthy();
+    await expect(deliver(h, org, source, fullUrl)).rejects.toMatchObject({ status: 429 });
+
+    h.clock.t = NOW + 61_000; // past the one-minute window
+    await expect(deliver(h, org, source, fullUrl)).resolves.toBeTruthy();
+  });
+});
+
 describe('sealing primitives', () => {
   it('round-trips, rejects tampering and rejects another tenant’s AAD', () => {
     const aad = tenantAad({ organizationId: 'o1', workspaceId: 'w1', sourceConnectionId: 's1' });

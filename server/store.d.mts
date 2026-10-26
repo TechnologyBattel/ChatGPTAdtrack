@@ -88,6 +88,70 @@ export interface Records {
   remove(collection: string, id: string, opts?: WriteOptions): Promise<boolean>;
   purgeWhere(collection: string, where: Record<string, unknown>, opts?: WriteOptions): Promise<number>;
   purgeBefore(collection: string, field: string, cutoffMs: number, opts?: WriteOptions): Promise<number>;
+  /**
+   * Consume a one-shot record exactly once. Atomic in both adapters: a memory section
+   * with no await between check and write, and a Firestore transaction.
+   */
+  consumeOnce(
+    collection: string,
+    id: string,
+    opts?: { orgId?: string | null; at?: number; expect?: Record<string, unknown> },
+  ): Promise<{
+    consumed: boolean;
+    reason: 'not_found' | 'mismatch' | 'already_used' | null;
+    doc: Record<string, any> | null;
+  }>;
+  /**
+   * Count a hit inside a fixed window, atomically, and report whether it is allowed.
+   * Used for per-source webhook rate limiting; the counter keeps rising past `limit`
+   * so an operator can see how far over a source went.
+   */
+  bumpCounter(
+    collection: string,
+    id: string,
+    opts: { orgId?: string | null; at?: number; windowMs: number; limit: number },
+  ): Promise<{
+    allowed: boolean;
+    count: number;
+    limit: number;
+    resetAt: number;
+    windowStart: number;
+  }>;
+  /** Take an expiring lease, or report the lease that is already held. */
+  acquireLease(
+    collection: string,
+    id: string,
+    opts: { orgId?: string | null; at?: number; ttlMs: number; holder: string; patch?: Record<string, any> },
+  ): Promise<{
+    acquired: boolean;
+    reason?: 'not_found' | 'held';
+    tookOver?: boolean;
+    doc: Record<string, any> | null;
+    lease?: { holder: string; expiresAt: number } | null;
+  }>;
+  renewLease(
+    collection: string,
+    id: string,
+    opts: { orgId?: string | null; at?: number; ttlMs: number; holder: string },
+  ): Promise<{ renewed: boolean; reason: 'not_found' | 'lost' | null }>;
+  /** Release the lease and (optionally) commit the holder's result in the same step. */
+  releaseLease(
+    collection: string,
+    id: string,
+    opts: {
+      orgId?: string | null;
+      at?: number;
+      holder: string;
+      patch?: Record<string, any>;
+      /** Guard evaluated atomically: returning false drops `patch` but frees the lease. */
+      unless?: ((record: Record<string, any>) => boolean) | null;
+    },
+  ): Promise<{
+    released: boolean;
+    applied: boolean;
+    reason: 'not_found' | 'lost' | 'guarded' | null;
+    doc: Record<string, any> | null;
+  }>;
 }
 
 export interface Maintenance {

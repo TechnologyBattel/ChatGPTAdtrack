@@ -79,6 +79,8 @@ export type ResearchReport = {
     timeZone: string;
   };
   counts: Record<string, number>;
+  /** Collections whose totals are minimums because the read hit the store row cap. */
+  countsAreLowerBound: string[];
   dataStates: Record<string, DataState>;
   permissions: string[];
   findings: Finding[];
@@ -116,13 +118,32 @@ export const createResearchRun = (orgId: string, workspaceId: string, goal: Rese
   call<ResearchRun>(`${wsPath(orgId, workspaceId)}/research/runs`, {
     method: 'POST',
     body: JSON.stringify({ goal }),
-  });
+  }).then(asResearchRun);
 
 export const listResearchRuns = (orgId: string, workspaceId: string) =>
-  call<{ runs: ResearchRunSummary[] }>(`${wsPath(orgId, workspaceId)}/research/runs`).then((r) => r.runs);
+  call<{ runs?: ResearchRunSummary[] }>(`${wsPath(orgId, workspaceId)}/research/runs`).then((r) =>
+    // A malformed body is an empty list, not a crash: the caller renders "no saved reports"
+    // rather than an exception inside a query.
+    Array.isArray(r?.runs) ? r.runs : [],
+  );
+
+/**
+ * A research run the UI can render, or an explicit failure.
+ *
+ * The client trusts the server's shape, but a proxy, a wrong base URL or a partial
+ * deployment can return 200 with HTML. Rendering `undefined.findings` would blank the
+ * page; refusing with a named error shows the failure instead.
+ */
+function asResearchRun(body: unknown): ResearchRun {
+  const run = body as ResearchRun | null;
+  if (!run || typeof run !== 'object' || !run.report || !Array.isArray(run.report.findings)) {
+    throw new ApiRequestError(502, 'malformed_response', 'The server returned a research run that could not be read.');
+  }
+  return run;
+}
 
 export const getResearchRun = (orgId: string, workspaceId: string, runId: string) =>
-  call<ResearchRun>(`${wsPath(orgId, workspaceId)}/research/runs/${encodeURIComponent(runId)}`);
+  call<ResearchRun>(`${wsPath(orgId, workspaceId)}/research/runs/${encodeURIComponent(runId)}`).then(asResearchRun);
 
 export const deleteResearchRun = (orgId: string, workspaceId: string, runId: string) =>
   call<{ runId: string; deleted: boolean }>(
@@ -143,6 +164,16 @@ export type ConnectorStatus = {
   sourceConnectionId: string | null;
   trustedForQualification: boolean;
   scopesGranted: string[];
+  /**
+   * False when HubSpot did not report the granted scopes. The UI must say "not verified"
+   * rather than assume the scopes we asked for were the scopes we got.
+   */
+  scopesVerified?: boolean;
+  /** A sync holds a lease right now. */
+  syncInProgress?: boolean;
+  syncLeaseExpiresAt?: number | null;
+  /** A previous sync died holding a lease; the next sync will take it over. */
+  syncStale?: boolean;
   portalId: string | null;
   lastSyncAt: number | null;
   lastSyncStatus: 'complete' | 'partial' | 'failed' | null;

@@ -1,0 +1,18 @@
+{
+  "//": [
+    "Licenses outside the permissive set that are accepted, with the reason and the",
+    "obligation they create. Each entry is a decision, not a silence: the license report",
+    "still lists the package, and anything else outside the allowlist fails the gate.",
+    "Review date: 2026-10-26. This is an engineering assessment, not a legal opinion."
+  ],
+  "accepted": [
+    {
+      "package": "caniuse-lite",
+      "license": "CC-BY-4.0",
+      "reason": "Browser-compatibility DATA (not code), pulled transitively by browserslist via autoprefixer and tailwindcss. It is read at build time to decide CSS prefixes; none of its data is redistributed by our application bundle.",
+      "obligation": "CC-BY-4.0 asks for attribution of the data source. Recorded in docs/THIRD_PARTY_NOTICES.md; the package is a devDependency and is not installed in the production API image.",
+      "commercialUse": "permitted with attribution",
+      "reviewBy": "2027-01-31"
+    }
+  ]
+}

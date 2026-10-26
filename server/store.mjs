@@ -44,6 +44,12 @@ export const RECORD_COLLECTIONS = [
   'auditLog',
   // Global, not tenant-scoped: an ingest key must be resolvable from the key id alone.
   'ingestKeys',
+  // Global, one-shot: a HubSpot OAuth state, consumed atomically by exactly one callback.
+  'oauthStates',
+  // Tenant-scoped: saved guided-research reports.
+  'researchRuns',
+  // Tenant-scoped: fixed-window counters (webhook delivery limits). Ephemeral.
+  'rateLimits',
 ];
 
 function assertContract(store, kind) {
@@ -136,6 +142,111 @@ function memoryRecords({ now }) {
 
     async remove(collection, id, { orgId = null } = {}) {
       return table(collection).delete(keyOf(id, orgId));
+    },
+
+    /**
+     * Consume a one-shot record (an OAuth state) exactly once.
+     *
+     * The whole read-check-write happens in this function with **no await between the
+     * check and the write**, so two concurrent callers in one process cannot both win:
+     * an `await` is the only place Node can interleave them. The Firestore adapter gets
+     * the same guarantee from a transaction instead (see below), which is what makes it
+     * safe across instances.
+     *
+     * Returns `{consumed, reason, doc}`; the caller maps `reason` to its own error codes
+     * so the HTTP surface does not have to know about storage.
+     */
+    async consumeOnce(collection, id, { orgId = null, at = now(), expect = {} } = {}) {
+      const key = keyOf(id, orgId);
+      const record = table(collection).get(key);
+      if (!record) return { consumed: false, reason: 'not_found', doc: null };
+      if (!matchesWhere(record, expect)) return { consumed: false, reason: 'mismatch', doc: { ...record } };
+      if (record.usedAt) return { consumed: false, reason: 'already_used', doc: { ...record } };
+      const next = { ...record, usedAt: at, updatedAt: at };
+      table(collection).set(key, next);
+      return { consumed: true, reason: null, doc: { ...next } };
+    },
+
+    /**
+     * Acquire an expiring lease on an existing record.
+     *
+     * A lease is how two instances agree that one of them owns a job. It expires, so a
+     * crashed holder cannot block the job forever, and it carries a holder id, so the
+     * owner can prove it still owns the lease when it finally writes its result.
+     */
+    async acquireLease(collection, id, { orgId = null, at = now(), ttlMs, holder, patch = {} } = {}) {
+      const key = keyOf(id, orgId);
+      const record = table(collection).get(key);
+      if (!record) return { acquired: false, reason: 'not_found', doc: null };
+      const lease = record.lease ?? null;
+      if (lease && Number(lease.expiresAt) > at) {
+        return { acquired: false, reason: 'held', doc: { ...record }, lease };
+      }
+      const nextLease = { holder, acquiredAt: at, renewedAt: at, expiresAt: at + ttlMs };
+      const next = { ...record, ...patch, lease: nextLease, updatedAt: at };
+      table(collection).set(key, next);
+      return { acquired: true, tookOver: Boolean(lease), doc: { ...next } };
+    },
+
+    /** Extend a lease we still hold. Returns `{renewed:false, reason:'lost'}` if we do not. */
+    async renewLease(collection, id, { orgId = null, at = now(), ttlMs, holder }) {
+      const key = keyOf(id, orgId);
+      const record = table(collection).get(key);
+      if (!record) return { renewed: false, reason: 'not_found' };
+      const lease = record.lease ?? null;
+      if (!lease || lease.holder !== holder || Number(lease.expiresAt) <= at) {
+        return { renewed: false, reason: 'lost' };
+      }
+      const nextLease = { ...lease, renewedAt: at, expiresAt: at + ttlMs };
+      table(collection).set(key, { ...record, lease: nextLease, updatedAt: at });
+      return { renewed: true, reason: null, lease: nextLease };
+    },
+
+    /**
+     * Release a lease and write the holder's result in the same atomic step.
+     *
+     * `unless(record)` is evaluated inside the atomic section. That is what stops a sync
+     * that finished after a disconnect from writing its own status over the disconnect:
+     * the guard sees the disconnected record and the patch is dropped (the lease is still
+     * released, so nothing is left locked).
+     */
+    async releaseLease(collection, id, { orgId = null, at = now(), holder, patch = {}, unless = null } = {}) {
+      const key = keyOf(id, orgId);
+      const record = table(collection).get(key);
+      if (!record) return { released: false, applied: false, reason: 'not_found', doc: null };
+      const lease = record.lease ?? null;
+      if (!lease || lease.holder !== holder) {
+        return { released: false, applied: false, reason: 'lost', doc: { ...record } };
+      }
+      const blocked = typeof unless === 'function' ? !unless(record) : false;
+      const { lease: _lease, ...rest } = record;
+      const next = { ...rest, ...(blocked ? {} : patch), updatedAt: at };
+      table(collection).set(key, next);
+      return { released: true, applied: !blocked, reason: blocked ? 'guarded' : null, doc: { ...next } };
+    },
+
+    /**
+     * Count a hit inside a fixed window, atomically, and say whether it is allowed.
+     *
+     * This is the primitive behind per-source webhook rate limiting. It has to be atomic
+     * for the same reason `consumeOnce` does: two deliveries arriving together must not
+     * both read "count 119" and both proceed. A window is fixed, not sliding, because a
+     * fixed window needs one counter instead of a list of timestamps, and a webhook
+     * limiter only needs to bound bursts, not be statistically exact.
+     */
+    async bumpCounter(collection, id, { orgId = null, at = now(), windowMs, limit } = {}) {
+      const key = keyOf(id, orgId);
+      const record = table(collection).get(key) ?? null;
+      const fresh = !record || Number(at) - Number(record.windowStart) >= Number(windowMs);
+      const windowStart = fresh ? at : Number(record.windowStart);
+      const previous = fresh ? 0 : Number(record.count) || 0;
+      const count = previous + 1;
+      const resetAt = windowStart + Number(windowMs);
+      // The counter keeps rising past the limit on purpose: an operator wants to know a
+      // source sent 900 deliveries, not merely "more than 120".
+      const next = { id, organizationId: orgId ?? null, windowStart, count, resetAt, updatedAt: at };
+      table(collection).set(key, next);
+      return { allowed: count <= Number(limit), count, limit: Number(limit), resetAt, windowStart };
     },
 
     async purgeWhere(collection, where, { orgId = null } = {}) {
@@ -240,6 +351,98 @@ function firestoreRecords({ firestore, prefix, now }) {
       return true;
     },
 
+    /**
+     * Consume a one-shot record exactly once.
+     *
+     * A Firestore transaction, not a read-then-write: the read and the write belong to
+     * the same commit, so two callbacks racing on the same OAuth state produce exactly
+     * one `consumed: true` no matter how many instances are running.
+     */
+    async consumeOnce(collection, id, { orgId = null, at = now(), expect = {} } = {}) {
+      const target = ref(collection, orgId).doc(id);
+      return firestore.runTransaction(async (tx) => {
+        const snap = await tx.get(target);
+        if (!snap.exists) return { consumed: false, reason: 'not_found', doc: null };
+        const record = toDoc(snap.data());
+        if (!matchesWhere(record, expect)) return { consumed: false, reason: 'mismatch', doc: record };
+        if (record.usedAt) return { consumed: false, reason: 'already_used', doc: record };
+        tx.set(target, { usedAt: at, updatedAt: at }, { merge: true });
+        return { consumed: true, reason: null, doc: { ...record, usedAt: at } };
+      });
+    },
+
+    /** Acquire an expiring lease, or report who holds it. Same transaction rule as above. */
+    async acquireLease(collection, id, { orgId = null, at = now(), ttlMs, holder, patch = {} } = {}) {
+      const target = ref(collection, orgId).doc(id);
+      return firestore.runTransaction(async (tx) => {
+        const snap = await tx.get(target);
+        if (!snap.exists) return { acquired: false, reason: 'not_found', doc: null };
+        const record = toDoc(snap.data());
+        const lease = record.lease ?? null;
+        if (lease && Number(lease.expiresAt) > at) {
+          return { acquired: false, reason: 'held', doc: record, lease };
+        }
+        const nextLease = { holder, acquiredAt: at, renewedAt: at, expiresAt: at + ttlMs };
+        tx.set(target, { ...patch, lease: nextLease, updatedAt: at }, { merge: true });
+        return { acquired: true, tookOver: Boolean(lease), doc: { ...record, ...patch, lease: nextLease } };
+      });
+    },
+
+    async renewLease(collection, id, { orgId = null, at = now(), ttlMs, holder }) {
+      const target = ref(collection, orgId).doc(id);
+      return firestore.runTransaction(async (tx) => {
+        const snap = await tx.get(target);
+        if (!snap.exists) return { renewed: false, reason: 'not_found' };
+        const record = toDoc(snap.data());
+        const lease = record.lease ?? null;
+        if (!lease || lease.holder !== holder || Number(lease.expiresAt) <= at) {
+          return { renewed: false, reason: 'lost' };
+        }
+        const nextLease = { ...lease, renewedAt: at, expiresAt: at + ttlMs };
+        tx.set(target, { lease: nextLease, updatedAt: at }, { merge: true });
+        return { renewed: true, reason: null, lease: nextLease };
+      });
+    },
+
+    async releaseLease(collection, id, { orgId = null, at = now(), holder, patch = {}, unless = null } = {}) {
+      const target = ref(collection, orgId).doc(id);
+      return firestore.runTransaction(async (tx) => {
+        const snap = await tx.get(target);
+        if (!snap.exists) return { released: false, applied: false, reason: 'not_found', doc: null };
+        const record = toDoc(snap.data());
+        const lease = record.lease ?? null;
+        if (!lease || lease.holder !== holder) {
+          return { released: false, applied: false, reason: 'lost', doc: record };
+        }
+        const blocked = typeof unless === 'function' ? !unless(record) : false;
+        const patchFields = blocked ? {} : patch;
+        const committed = { ...record, ...patchFields };
+        delete committed.lease;
+        tx.set(target, { ...patchFields, lease: null, updatedAt: at }, { merge: true });
+        return { released: true, applied: !blocked, reason: blocked ? 'guarded' : null, doc: committed };
+      });
+    },
+
+    /** Atomic fixed-window counter. See the in-memory adapter for why it exists. */
+    async bumpCounter(collection, id, { orgId = null, at = now(), windowMs, limit } = {}) {
+      const target = ref(collection, orgId).doc(id);
+      return firestore.runTransaction(async (tx) => {
+        const snap = await tx.get(target);
+        const record = snap.exists ? toDoc(snap.data()) : null;
+        const fresh = !record || Number(at) - Number(record.windowStart) >= Number(windowMs);
+        const windowStart = fresh ? at : Number(record.windowStart);
+        const previous = fresh ? 0 : Number(record.count) || 0;
+        const count = previous + 1;
+        const resetAt = windowStart + Number(windowMs);
+        tx.set(
+          target,
+          { id, organizationId: orgId ?? null, windowStart, count, resetAt, updatedAt: at },
+          { merge: true },
+        );
+        return { allowed: count <= Number(limit), count, limit: Number(limit), resetAt, windowStart };
+      });
+    },
+
     async purgeWhere(collection, where, { orgId = null } = {}) {
       let query = ref(collection, orgId);
       for (const [field, value] of Object.entries(where)) query = query.where(field, '==', value);
@@ -265,6 +468,11 @@ export const RETENTION_DAYS = {
   // Saved research is a business record made by a person; it is kept as long as the
   // evidence it cites (topics are kept indefinitely), so it is not swept.
   researchRuns: null,
+  // One-shot OAuth states are useless an hour after they expire. Kept for a day so a
+  // late callback still gets `state_expired` rather than an indistinguishable 404.
+  oauthStates: 1,
+  // Rate-limit windows are ephemeral; a day is already far past useful.
+  rateLimits: 1,
 };
 
 /** Which timestamp decides a record's age. Explicit per collection, not guessed. */
@@ -274,6 +482,8 @@ const RETENTION_FIELD = {
   auditLog: 'at',
   topics: 'createdAt',
   researchRuns: 'createdAt',
+  oauthStates: 'createdAt',
+  rateLimits: 'windowStart',
 };
 
 function createMaintenance({ records, now }) {

@@ -463,6 +463,37 @@ describe('retention and deletion', () => {
     expect(res.status).toBe(403);
   });
 
+  it('sweeps spent OAuth states but never saved research or topics', async () => {
+    const h = harness();
+    const a = await workspace(h);
+    const stale = h.now() - 2 * DAY; // beyond the 1-day OAuth state policy
+    const fresh = h.now() - 60_000;
+
+    await h.store.records.put('oauthStates', 'stale_state', { id: 'stale_state', createdAt: stale }, { orgId: null });
+    await h.store.records.put('oauthStates', 'fresh_state', { id: 'fresh_state', createdAt: fresh }, { orgId: null });
+    // Research is a business record and topics are the evidence it cites: neither is swept
+    // however old they are, so a purge must not quietly delete the agency's own history.
+    await h.store.records.put(
+      'researchRuns',
+      'run_old',
+      { id: 'run_old', organizationId: a.orgId, workspaceId: a.workspaceId, createdAt: stale, report: {} },
+      { orgId: a.orgId },
+    );
+    await h.store.records.put(
+      'topics',
+      'topic_old',
+      { id: 'topic_old', organizationId: a.orgId, workspaceId: a.workspaceId, createdAt: stale },
+      { orgId: a.orgId },
+    );
+
+    const result = await h.store.maintenance!.purge();
+    expect(result.removed.oauthStates).toBe(1);
+    expect(await h.store.records.get('oauthStates', 'stale_state')).toBeNull();
+    expect(await h.store.records.get('oauthStates', 'fresh_state')).not.toBeNull();
+    expect(await h.store.records.get('researchRuns', 'run_old', { orgId: a.orgId })).not.toBeNull();
+    expect(await h.store.records.get('topics', 'topic_old', { orgId: a.orgId })).not.toBeNull();
+  });
+
   it('publishes the policy it applies', async () => {
     const h = harness();
     const maintenance = h.store.maintenance;
@@ -471,5 +502,6 @@ describe('retention and deletion', () => {
     expect(policy.events).toBe(396);
     expect(policy.leads).toBe(760);
     expect(policy.auditLog).toBe(396);
+    expect(policy.oauthStates).toBe(1);
   });
 });

@@ -57,6 +57,79 @@ jobs:
       - name: End-to-end push/undo against a stub
         run: node scripts/e2e-push.mjs
 
+  supply-chain:
+    name: Licences, vulnerabilities and SBOM
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Fails on: a licence outside the permissive set with no documented acceptance, and
+      # an unacknowledged high/critical advisory. Moderate advisories that only a major
+      # upgrade can clear are accepted in security/vulnerability-allowlist.json with an
+      # owner and a review date — the check prints them so they stay visible.
+      - name: Supply-chain gate
+        run: node scripts/supply-chain.mjs all --check
+
+      - name: Third-party notices match the installed tree
+        run: |
+          set -e
+          diff -u docs/THIRD_PARTY_NOTICES.md artifacts/third-party-notices.md \
+            || { echo "::error::docs/THIRD_PARTY_NOTICES.md is stale; run node scripts/supply-chain.mjs notices and copy the output"; exit 1; }
+
+      - name: Upload licence, vulnerability and SBOM reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: supply-chain-reports
+          path: artifacts/
+          retention-days: 30
+
+  e2e:
+    name: Browser end-to-end (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # No `|| true` anywhere in this job, and no continue-on-error: a browser that cannot
+      # be installed must fail the gate. The preflight below makes that explicit so a
+      # missing binary is never mistaken for "nothing to run".
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Preflight — the browser really exists
+        run: node scripts/check-e2e-browser.mjs
+
+      - name: Playwright
+        run: npm run e2e
+
+      - name: Upload Playwright report and traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
+
   docker-lint:
     name: Container runs unprivileged
     runs-on: ubuntu-latest

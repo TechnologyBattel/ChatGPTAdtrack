@@ -172,6 +172,7 @@ const hubspot = createHubSpotConnector({
   },
   clientFactory,
   ingest: ingestV2,
+  limits: { webhookPerMinute: config.connectors.hubspot.webhookPerMinute },
 });
 
 const connectors = createConnectorRouter({ hubspot, publicBaseUrl: config.connectors.publicBaseUrl });
@@ -196,6 +197,7 @@ const listener = createRequestListener({
   app,
   maxBodyBytes: config.track.maxBodyBytes,
   trustProxy: config.track.trustProxy,
+  draining: () => draining,
 });
 
 if (config.connectors.hubspot.clientId) {
@@ -204,6 +206,8 @@ if (config.connectors.hubspot.clientId) {
     console.log('[api] connectors: PUBLIC_BASE_URL is unset, so HubSpot webhooks will be refused');
   }
 }
+
+let draining = false;
 
 const server = http.createServer((req, res) => {
   void listener(req, res);
@@ -256,10 +260,47 @@ server.listen(config.apiPort, '0.0.0.0', () => {
   }
 });
 
-for (const signal of ['SIGTERM', 'SIGINT']) {
-  process.on(signal, () => {
-    if (outboxTimer) clearInterval(outboxTimer);
-    if (retentionTimer) clearInterval(retentionTimer);
-    server.close(() => process.exit(0));
+// Shutdown.
+//
+// `server.close()` stops accepting and waits for in-flight requests; it does not stop
+// keep-alive sockets that are idle, and it has no deadline of its own. Without one, a
+// single half-open connection keeps the process alive until the platform SIGKILLs it,
+// which truncates whatever it was doing. So: mark draining (health answers 503), close
+// idle sockets, wait for the rest up to SHUTDOWN_TIMEOUT_MS, then stop hard and say so.
+let shuttingDown = false;
+let shutdownTimer = null;
+
+function shutdown(signal) {
+  if (shuttingDown) {
+    // A second signal means "now": the operator has stopped being patient.
+    console.error(`[api] ${signal} again: exiting without waiting`);
+    process.exit(1);
+  }
+  shuttingDown = true;
+  draining = true;
+  console.log(`[api] ${signal} received: draining for up to ${config.shutdown.timeoutMs}ms`);
+
+  if (outboxTimer) clearInterval(outboxTimer);
+  if (retentionTimer) clearInterval(retentionTimer);
+
+  shutdownTimer = setTimeout(() => {
+    const open = server.closeAllConnections ? 'open sockets were forcibly closed' : 'no socket API available';
+    console.error(
+      `[api] drain deadline of ${config.shutdown.timeoutMs}ms passed; ${open}. Some requests may not have completed.`,
+    );
+    server.closeAllConnections?.();
+    process.exit(1);
+  }, config.shutdown.timeoutMs);
+  shutdownTimer.unref?.();
+
+  server.close(() => {
+    clearTimeout(shutdownTimer);
+    console.log('[api] drained: all connections closed');
+    process.exit(0);
   });
+  // Idle keep-alive sockets have nothing to finish; closing them is what makes a drain
+  // take milliseconds instead of the full deadline.
+  server.closeIdleConnections?.();
 }
+
+for (const signal of ['SIGTERM', 'SIGINT']) process.on(signal, () => shutdown(signal));

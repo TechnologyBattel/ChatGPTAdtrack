@@ -10,6 +10,10 @@ serviceAccount*.json
 firebase-debug.log
 .DS_Store
 
+# Generated supply-chain reports (licence/vulnerability/SBOM/load). CI uploads them;
+# the committed summary lives in docs/THIRD_PARTY_NOTICES.md.
+artifacts/
+
 # Playwright artefacts (browser runs are opt-in: see playwright.config.ts)
 test-results/
 playwright-report/

@@ -49,10 +49,15 @@ conversation content, special-category data.
 | Raw events | 396 days (13 months) | Application sweep every `RETENTION_SWEEP_INTERVAL_MS` (default 6 h), plus an owner-only manual purge that returns per-collection counts |
 | Lead and order records | 760 days (25 months) | Same sweep |
 | Research topics | Kept (not personal data) | `topics: null` in the policy |
+| Saved research runs | Kept (a business record the agency chose to save) | `researchRuns: null` in the policy |
+| One-shot OAuth states | 1 day | Same sweep; kept a day so a late callback gets `state_expired` rather than an indistinguishable 404 |
+| Webhook rate-limit windows | 1 day | Same sweep; contains a counter and a window start, no personal data |
 | Audit log (tenancy + push/undo) | 396 days | Same sweep; in-memory cap of 500 entries in dev, Firestore in production |
 
 The purge deletes exactly what the policy lists, per organization, and writes a
-`retention.purge` audit entry with the counts. There is **no undo**, so the manual
+`retention.purge` audit entry with the counts. A test asserts that the collections the
+policy marks `null` (topics, saved research) survive a purge, so a future policy edit
+cannot quietly delete an agency's own history. There is **no undo**, so the manual
 endpoint is owner-only. Changing a day count deletes data on the next sweep.
 
 ## Deletion and export (decided)

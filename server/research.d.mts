@@ -40,6 +40,8 @@ export interface ResearchReport {
     timeZone: string;
   };
   counts: Record<string, number>;
+  /** Collections whose totals are minimums because the read hit the store row cap. */
+  countsAreLowerBound: string[];
   dataStates: Record<string, DataState>;
   permissions: string[];
   findings: ResearchFinding[];
@@ -87,6 +89,8 @@ export declare function buildResearchReport(input: {
   permissions?: string[];
   goal?: ResearchGoal;
   now?: () => number;
+  /** Collections whose read was capped; their totals are reported as lower bounds. */
+  truncated?: string[];
 }): ResearchReport;
 
 export interface ResearchApi {
@@ -119,4 +123,10 @@ export interface ResearchApi {
   buildReport: typeof buildResearchReport;
 }
 
-export declare function createResearch(options: { store: Store; tenancy: Tenancy; now?: () => number }): ResearchApi;
+export declare function createResearch(options: {
+  store: Store;
+  tenancy: Tenancy;
+  now?: () => number;
+  /** Rows one aggregate query may read. Exceeding it turns totals into lower bounds. */
+  aggregateLimit?: number;
+}): ResearchApi;

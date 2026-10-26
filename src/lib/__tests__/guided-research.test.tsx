@@ -74,6 +74,7 @@ function report(overrides: Record<string, unknown> = {}) {
     },
     window: { firstEventAt: null, lastEventAt: null, dataFreshness: 'none', currency: 'INR', timeZone: 'Asia/Kolkata' },
     counts: { leads: 0, touchpointEvents: 0 },
+    countsAreLowerBound: [],
     dataStates: { leads: 'no_data', touchpointEvents: 'unavailable' },
     permissions: ['data.read'],
     findings: [
@@ -94,14 +95,14 @@ function report(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function stubFetch(overrides: Record<string, () => unknown> = {}) {
+function stubFetch(overrides: Record<string, () => unknown | Promise<unknown>> = {}) {
   const calls: string[] = [];
   const impl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     calls.push(`${init?.method ?? 'GET'} ${url}`);
     for (const [fragment, handler] of Object.entries(overrides)) {
       if (url.includes(fragment)) {
-        const result = handler() as { status?: number; body: unknown };
+        const result = (await handler()) as { status?: number; body: unknown };
         const status = result.status ?? 200;
         return {
           ok: status < 400,
@@ -211,6 +212,135 @@ describe('guided research', () => {
     const buttons = screen.getByTestId('connector-card').querySelectorAll('button');
     expect(buttons.length).toBeGreaterThan(0);
     for (const button of Array.from(buttons)) expect((button as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it('renders a network failure as a failure, never as an endless spinner', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch');
+      }),
+    );
+    renderScreen();
+    await waitFor(() => expect(screen.getByText(/Failed to fetch/i)).toBeTruthy(), { timeout: 4000 });
+    expect(screen.queryByText(/Loading the agencies/i)).toBeNull();
+    expect(screen.queryByRole('button', { name: /run research/i })).toBeNull();
+  });
+
+  it('tells an expired session to sign in rather than showing an empty workspace', async () => {
+    stubFetch({
+      '/api/orgs': () => ({ status: 401, body: { error: { code: 'unauthenticated', message: 'Token expired.' } } }),
+    });
+    renderScreen();
+    await waitFor(() => expect(screen.getByText(/Sign in to load this workspace/i)).toBeTruthy(), {
+      timeout: 4000,
+    });
+  });
+
+  it('shows elapsed seconds — not a percentage — while the request is open', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    stubFetch({
+      'research/runs': async () => {
+        await gate;
+        return { status: 201, body: { runId: 'res_1', report: report() } };
+      },
+    });
+    renderScreen();
+    await waitFor(() => expect(screen.getByText('Review campaign attribution')).toBeTruthy());
+    screen.getByRole('button', { name: /run research/i }).click();
+
+    await waitFor(() => expect(screen.getByText(/one request is open/i)).toBeTruthy(), { timeout: 4000 });
+    const page = screen.getByTestId('guided-research').textContent ?? '';
+    expect(page).toMatch(/\d+s — one request is open/);
+    // No invented progress: no percentage anywhere in the running state.
+    expect(page).not.toMatch(/\d{1,3}\s?%/);
+
+    release();
+    await waitFor(() => expect(screen.getByTestId('research-report')).toBeTruthy(), { timeout: 4000 });
+  });
+
+  it('marks a capped count as a minimum instead of presenting it as a total', async () => {
+    stubFetch({
+      'research/runs': () => ({
+        status: 201,
+        body: {
+          runId: 'res_lb',
+          goal: 'attribution',
+          report: report({
+            counts: { leads: 1000 },
+            countsAreLowerBound: ['leads'],
+            dataStates: { leads: 'observed' },
+          }),
+        },
+      }),
+    });
+    renderScreen();
+    await waitFor(() => expect(screen.getByText('Review campaign attribution')).toBeTruthy());
+    screen.getByRole('button', { name: /run research/i }).click();
+    await waitFor(() => expect(screen.getByTestId('research-report')).toBeTruthy());
+    const panel = screen.getByTestId('research-report');
+    expect(panel.textContent).toContain('≥ 1000');
+    expect(panel.textContent).not.toMatch(/(^|[^≥ ])1000(?!\d)/);
+    expect(panel.textContent).toContain('store row cap');
+  });
+
+  it('says so when HubSpot did not report scopes, and when a sync did not finish', async () => {
+    stubFetch({
+      '/permissions': () => ({
+        body: { role: 'owner', permissions: ['data.read', 'source.manage', 'research.write'] },
+      }),
+      '/connectors/hubspot': () => ({
+        body: {
+          ...emptyConnector,
+          configured: true,
+          missingConfig: [],
+          status: 'connected',
+          connected: true,
+          scopesVerified: false,
+          syncStale: true,
+          scopesGranted: [],
+          lastSyncAt: NOW,
+        },
+      }),
+    });
+    renderScreen();
+    const card = await screen.findByTestId('connector-card');
+    await waitFor(() => expect(card.textContent).toContain('scopes not reported by HubSpot'));
+    expect(card.textContent).toContain('last sync did not finish');
+    expect(card.textContent).toContain('take over from it');
+  });
+
+  it('gives every control on the journey an accessible name', async () => {
+    stubFetch();
+    renderScreen();
+    await waitFor(() => expect(screen.getByText('Review campaign attribution')).toBeTruthy());
+    const root = screen.getByTestId('guided-research');
+    const controls = Array.from(root.querySelectorAll('button, select, input'));
+    expect(controls.length).toBeGreaterThan(3);
+    const unnamed = controls.filter((el) => {
+      const label = el.getAttribute('aria-label')?.trim();
+      const labelledBy = el.getAttribute('aria-labelledby');
+      const text = (el.textContent ?? '').trim();
+      return !label && !labelledBy && !text && !el.closest('label');
+    });
+    expect(unnamed).toEqual([]);
+    // The two scope selectors are labelled, not placeholders.
+    expect(screen.getByLabelText('Agency')).toBeTruthy();
+    expect(screen.getByLabelText('Client workspace')).toBeTruthy();
+  });
+
+  it('refuses a malformed success body instead of rendering a broken report', async () => {
+    stubFetch({
+      'research/runs': () => ({ status: 201, body: { runId: 'res_1', report: null } }),
+    });
+    renderScreen();
+    await waitFor(() => expect(screen.getByText('Review campaign attribution')).toBeTruthy());
+    screen.getByRole('button', { name: /run research/i }).click();
+    await waitFor(() => expect(screen.getByText(/could not be read/i)).toBeTruthy(), { timeout: 4000 });
+    expect(screen.queryByTestId('research-report')).toBeNull();
   });
 
   it('shows a server error as a failure instead of a spinner that never ends', async () => {

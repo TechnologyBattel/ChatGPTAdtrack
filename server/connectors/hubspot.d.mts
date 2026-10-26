@@ -20,7 +20,14 @@ export interface HubSpotStatus {
   sourceConnectionId: string | null;
   trustedForQualification: boolean;
   scopesGranted: string[];
+  /** False when the provider reported no scope list: unverified, not "all granted". */
+  scopesVerified: boolean;
   portalId: string | null;
+  /** True while a live lease is held by a running sync. */
+  syncInProgress: boolean;
+  syncLeaseExpiresAt: number | null;
+  /** `syncing` with no live lease: a crashed run, recoverable by running a sync. */
+  syncStale: boolean;
   lastSyncAt: number | null;
   lastSyncStatus: string | null;
   lastSync: Record<string, any> | null;
@@ -44,6 +51,8 @@ export interface HubSpotSyncResult {
   pages: number;
   countsSemantics: string;
   error: { code: string; message: string } | null;
+  /** False when the connection changed mid-sync and the result was deliberately dropped. */
+  applied: boolean;
   connection: HubSpotStatus;
 }
 

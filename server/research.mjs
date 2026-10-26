@@ -97,6 +97,10 @@ export function buildResearchReport({
   permissions = [],
   goal = 'attribution',
   now = () => Date.now(),
+  // Collections whose read hit the store's row cap. Their counts are lower bounds, and
+  // saying so is the only honest option: a capped count presented as exact is a
+  // fabricated number, even when the cap is high.
+  truncated = [],
 }) {
   const at = now();
   const eventTimes = events.map((e) => e.occurredAt).filter((t) => typeof t === 'number');
@@ -382,6 +386,19 @@ export function buildResearchReport({
     }
   }
 
+  if (truncated.length > 0) {
+    add({
+      id: 'data.truncated',
+      severity: 'attention',
+      topics: ['attribution', 'lead_data', 'topics', 'sources'],
+      title: `Some totals are lower bounds: ${truncated.join(', ')} stopped at the read cap`,
+      summary:
+        'The report read as many rows as one query allows. Every affected count is a minimum ("at least"), not an exact total.',
+      evidence: truncated.map((key) => evidence(`${key} (counted)`, 'at least')),
+      limitations: ['Raising the read cap, or counting in the database, is required for an exact total.'],
+    });
+  }
+
   const severityRank = { gap: 0, attention: 1, info: 2 };
   findings.sort((a, b) => {
     const relevance = Number(!a.topics.includes(goal)) - Number(!b.topics.includes(goal));
@@ -435,6 +452,8 @@ export function buildResearchReport({
       touchpointEvents: touchpoints.length,
     },
     dataStates,
+    // Which totals are minimums. Empty means every number above is exact for this window.
+    countsAreLowerBound: [...truncated],
     permissions,
     findings,
     limitations: [
@@ -442,6 +461,9 @@ export function buildResearchReport({
       'No keyword volume, CPC, competitor spend or trend is measured by this product; those are absent from every number above.',
       `Amounts, where present, are in ${workspace.currency}; currencies are never converted or compared directly.`,
       'Attribution is observed touchpoints within a stated window, not proof of causation.',
+      ...(truncated.length
+        ? [`Totals for ${truncated.join(', ')} are lower bounds: the read stopped at the store row cap.`]
+        : []),
     ],
     nextActions: findings
       .filter((f) => f.action)
@@ -449,20 +471,47 @@ export function buildResearchReport({
   };
 }
 
-export function createResearch({ store, tenancy, now = () => Date.now() } = {}) {
+export function createResearch({
+  store,
+  tenancy,
+  now = () => Date.now(),
+  // One query may return at most this many rows (`records.list` caps at 1,000 by default).
+  // Asking for one more than the cap is what lets the report *know* it was truncated
+  // instead of silently reporting a capped number as a total.
+  aggregateLimit = 5000,
+} = {}) {
   if (!store?.records) throw new Error('createResearch requires a store with records.');
 
   async function loadScoped({ principal, organizationId, workspaceId, permission }) {
     const ctx = await tenancy.context(principal, organizationId, permission);
     const workspace = await tenancy.workspace(organizationId, workspaceId, { role: ctx.role });
+    const read = (collection) =>
+      store.records.list(collection, { orgId: organizationId, where: { workspaceId }, limit: aggregateLimit + 1 });
     const [sources, campaigns, topics, leads, events] = await Promise.all([
-      store.records.list('sources', { orgId: organizationId, where: { workspaceId } }),
-      store.records.list('campaigns', { orgId: organizationId, where: { workspaceId } }),
-      store.records.list('topics', { orgId: organizationId, where: { workspaceId } }),
-      store.records.list('leads', { orgId: organizationId, where: { workspaceId } }),
-      store.records.list('events', { orgId: organizationId, where: { workspaceId } }),
+      read('sources'),
+      read('campaigns'),
+      read('topics'),
+      read('leads'),
+      read('events'),
     ]);
-    return { ctx, workspace, sources, campaigns, topics, leads, events };
+    // A collection that came back over the cap is a lower bound; drop the sentinel row so
+    // every count is "at least this many", never "this many".
+    const truncated = [];
+    const cap = (key, rows) => {
+      if (rows.length > aggregateLimit) {
+        truncated.push(key);
+        return rows.slice(0, aggregateLimit);
+      }
+      return rows;
+    };
+    const scoped = {
+      sources: cap('sources', sources),
+      campaigns: cap('campaigns', campaigns),
+      topics: cap('topics', topics),
+      leads: cap('leads', leads),
+      events: cap('events', events),
+    };
+    return { ctx, workspace, truncated, ...scoped };
   }
 
   async function plan({ principal, organizationId, workspaceId }) {
@@ -487,6 +536,7 @@ export function createResearch({ store, tenancy, now = () => Date.now() } = {}) 
       permissions,
       goal,
       now,
+      truncated: scoped.truncated,
     });
 
     const run = {
