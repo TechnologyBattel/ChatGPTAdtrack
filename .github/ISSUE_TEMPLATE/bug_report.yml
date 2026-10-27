@@ -1,0 +1,117 @@
+name: Bug report
+description: Something behaves differently from what the documentation says
+title: 'bug: '
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Please **do not** include ad-account keys, provider keys,
+        customer data or personal data — replace them with placeholders.
+
+        If this looks like a security vulnerability (authorization bypass, tenant data
+        exposure, secret leakage), stop and follow [SECURITY.md](https://github.com/TechnologyBattel/ChatGPTAdtrack/blob/main/SECURITY.md) instead of
+        opening a public issue. Do not put reproduction steps in a public issue.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This report contains no secrets, credentials or customer data.
+          required: true
+        - label: This is not a security vulnerability (those go through SECURITY.md).
+          required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The behaviour you observed, and what you expected instead.
+      placeholder: |
+        Observed: ...
+        Expected: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The shortest sequence that shows the problem.
+      placeholder: |
+        1. Start the app with `npm run api` and `npm run dev`
+        2. Ask "..."
+        3. Open the bar under the search box
+        4. See ...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: data-mode
+    attributes:
+      label: Data mode
+      description: Which data was the app using?
+      options:
+        - Demo data (no keys configured)
+        - Live account (server has ad-account keys)
+        - Not sure
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Answers and metrics
+        - Context-hint research and push
+        - Guided research reports
+        - Workspace panel, roles and permissions
+        - Attribution, consent and event ingest
+        - HubSpot connector
+        - Private Research Mode
+        - Build, tooling or CI
+        - Documentation
+        - Unsure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Commit or version
+      description: The commit hash, branch or version you are running.
+      placeholder: e.g. main @ a7f8b6b, or 0.1.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Node version, OS and browser. `node -v` output is enough for the runtime.
+      placeholder: |
+        Node: 22.x
+        OS: ...
+        Browser: ...
+    validations:
+      required: false
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Paste error text or console output with secrets and personal data removed.
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: What you already checked
+      description: Did `npm run verify` pass? Did the same thing happen on demo data?
+    validations:
+      required: false

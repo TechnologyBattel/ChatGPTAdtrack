@@ -1,0 +1,80 @@
+name: Feature request
+description: Propose a change in behaviour, scope or the user's workflow
+title: 'feat: '
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This project is pre-release and deliberately narrow in scope. Proposals that add a
+        new integration or a new data flow are expected to explain the security, privacy and
+        verification cost, not only the benefit.
+
+        Please do not describe a planned feature as already supported, and do not include
+        customer data or credentials.
+
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I read the "What it does today" and "Known limitations" sections of the README.
+          required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What can you not do today, and who is blocked by it? Describe the workflow, not the implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed change
+      description: What should happen instead. If you have considered alternatives, list them.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Answers and metrics
+        - Context-hint research and push
+        - Guided research reports
+        - Workspace panel, roles and permissions
+        - Attribution, consent and event ingest
+        - HubSpot connector or a new connector
+        - Private Research Mode
+        - Build, tooling or CI
+        - Documentation
+    validations:
+      required: true
+
+  - type: textarea
+    id: security
+    attributes:
+      label: Security, privacy and tenancy impact
+      description: Does this touch authentication, roles, tenant boundaries, secrets, audit, consent or stored data? What new data would be collected or retained?
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: How this could be verified
+      description: What evidence would show that it works — and what would remain unverifiable without real credentials?
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope confirmation
+      options:
+        - label: This does not require describing unverified integrations as working ones.
+          required: true
