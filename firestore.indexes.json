@@ -1,0 +1,50 @@
+{
+  "//": [
+    "Composite indexes for the queries in server/store.mjs.",
+    "Deploy with: firebase deploy --only firestore:indexes",
+    "Every entry below is required by a specific query; removing one turns that",
+    "query into a FAILED_PRECONDITION at runtime, not at build time.",
+    "Single-field indexes (at, nextAttemptAt, createdAt) are automatic in Firestore.",
+    "TTL policies are configured per field and cannot be expressed here — see",
+    "docs/SECURITY.md §7 for the three policies to enable."
+  ],
+  "indexes": [
+    {
+      "//": "audit.list({ adGroupId }) → where adGroupId == + orderBy at desc",
+      "collectionGroup": "adtrack_audit",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "adGroupId", "order": "ASCENDING" },
+        { "fieldPath": "at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "//": "audit.list({}) → orderBy at desc, plus the /api/audit ok=false filter",
+      "collectionGroup": "adtrack_audit",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ok", "order": "ASCENDING" },
+        { "fieldPath": "at", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "//": "outbox.due() → where status == pending + nextAttemptAt <= now, orderBy nextAttemptAt",
+      "collectionGroup": "adtrack_outbox",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "nextAttemptAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "//": "outbox.list({ status }) → where status == + orderBy createdAt desc",
+      "collectionGroup": "adtrack_outbox",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}

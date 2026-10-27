@@ -1,0 +1,31 @@
+rules_version = '2';
+
+// The browser never talks to Firestore. Every read and write goes through the API
+// server, which authenticates the caller (server/auth.mjs), applies the consent and
+// role rules, and uses the Admin SDK — which bypasses these rules entirely.
+//
+// Denying everything is therefore the correct policy, not a placeholder: there is no
+// client query to allow, and a deny-all rule can never be widened by a later bug in
+// a query builder. If a browser-side SDK is ever added, this file must be revisited
+// at the same time; until then, a leaked project id buys an attacker nothing.
+//
+// Collections this app owns (all prefixed `adtrack_`):
+//   adtrack_sessions  — short-lived tracking sessions   (TTL: expiresAt)
+//   adtrack_consents  — consent grants, single use      (TTL: expiresAt)
+//   adtrack_audit     — push history, failures included (no TTL: it is the audit trail)
+//   adtrack_outbox    — queued undelivered events       (no TTL: a pending event must
+//                                                        not vanish; prune delivered/dead
+//                                                        rows with a scheduled job)
+//   adtrack_orgs/{orgId}/<collection> — tenant-scoped records: workspaces, memberships,
+//                                       campaigns, topics, leads, events, sources,
+//                                       ingestKeys, researchRuns. Reads and writes are
+//                                       server-only; OAuth tokens inside `sources` are
+//                                       AES-256-GCM sealed, so a database dump alone
+//                                       does not yield a usable CRM credential.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

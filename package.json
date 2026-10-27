@@ -1,0 +1,72 @@
+{
+  "name": "adtrack",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AI AdTracker — performance and context-hint research for ChatGPT Ads. Plain-language answers from your own ad data.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173 --strictPort",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4173",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "verify": "npm run lint && npm run format:check && tsc --noEmit && vitest run && vite build && node scripts/check-server.mjs && node scripts/check-prod-guards.mjs && node scripts/e2e-push.mjs && node scripts/check-dockerfile.mjs && node scripts/supply-chain.mjs self-test",
+    "api": "node server/server.mjs",
+    "dev:all": "node server/server.mjs & vite --host 0.0.0.0 --port 5173 --strictPort",
+    "e2e:push": "node scripts/e2e-push.mjs",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test:watch": "vitest",
+    "set-role": "node scripts/set-role.mjs",
+    "e2e": "playwright test",
+    "supply-chain": "node scripts/supply-chain.mjs all --check",
+    "sbom": "node scripts/supply-chain.mjs sbom",
+    "licenses": "node scripts/supply-chain.mjs license",
+    "notices": "node scripts/supply-chain.mjs notices",
+    "audit": "node scripts/supply-chain.mjs audit",
+    "e2e:preflight": "node scripts/check-e2e-browser.mjs",
+    "load:smoke": "node scripts/load-smoke.mjs",
+    "check:docker": "node scripts/check-dockerfile.mjs",
+    "supply-chain:selftest": "node scripts/supply-chain.mjs self-test",
+    "staging:check": "node scripts/staging-check.mjs",
+    "perf": "node scripts/load-smoke.mjs"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.104.5",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "@playwright/test": "^1.64.1",
+    "@testing-library/dom": "^10.4.0",
+    "@testing-library/react": "^16.1.0",
+    "@types/react": "18.3.12",
+    "@types/react-dom": "18.3.1",
+    "@vitejs/plugin-react": "4.3.4",
+    "autoprefixer": "10.4.20",
+    "eslint": "^9.17.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-react-hooks": "^5.1.0",
+    "eslint-plugin-react-refresh": "^0.4.16",
+    "globals": "^15.14.0",
+    "jsdom": "^25.0.1",
+    "postcss": "^8.5.31",
+    "prettier": "^3.4.2",
+    "tailwindcss": "3.4.17",
+    "typescript": "5.7.2",
+    "typescript-eslint": "^8.18.2",
+    "vite": "^6.4.5",
+    "vitest": "^5.0.5"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "npm": ">=10"
+  },
+  "optionalDependencies": {
+    "@hubspot/api-client": "^14.0.1",
+    "firebase-admin": "^13.10.0"
+  }
+}
