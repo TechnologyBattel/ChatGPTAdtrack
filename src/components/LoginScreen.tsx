@@ -35,8 +35,8 @@ export default function LoginScreen({ provider, onSignedIn, reason }: Props) {
         <div className="w-full max-w-[380px]">
           <div className="mb-6 text-center">
             <span className="select-none text-[34px] leading-none tracking-tight">
-              <span className="font-normal text-ink">Ad</span>
-              <span className="font-medium text-brand">Track</span>
+              <span className="font-normal text-ink">AI</span>
+              <span className="ml-1 font-medium text-brand">AdTracker</span>
             </span>
             <p className="mt-2 text-[13px] leading-5 text-muted">{reason ?? 'Sign in to see your ad account.'}</p>
           </div>
@@ -112,7 +112,7 @@ export default function LoginScreen({ provider, onSignedIn, reason }: Props) {
           {error && (
             <p
               role="alert"
-              className="mt-4 rounded-lg border border-[#f6aea9] bg-[#fce8e6] px-3 py-2 text-[12px] leading-5 text-[#a50e0e]"
+              className="mt-4 rounded-lg border border-[#f6aea9] bg-dangerSoft px-3 py-2 text-[12px] leading-5 text-[#a50e0e]"
             >
               {error}
             </p>

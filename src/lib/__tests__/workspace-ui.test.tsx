@@ -11,7 +11,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import WorkspacePanel from '../../components/WorkspacePanel';
 import { setTokenReader } from '../api';
 
-const ORG = { organizationId: 'org_1', name: 'Agency', slug: 'agency', role: 'owner' };
+const ORG = { organizationId: 'org_1', name: 'Agency', slug: 'agency', role: 'owner', plan: 'free' };
 const WS = {
   workspaceId: 'ws_1',
   name: 'Main',
@@ -137,6 +137,29 @@ describe('workspace panel', () => {
     expect(screen.getByText('Client A — Main')).toBeTruthy();
     expect(screen.getByText(/INR · Asia\/Kolkata · IN/)).toBeTruthy();
     expect(screen.getByText('HubSpot')).toBeTruthy();
+  });
+
+  it('shows the organization plan beside the selector, and defaults to free', async () => {
+    render(<WorkspacePanel onClose={() => undefined} />);
+    await waitFor(() => expect(screen.getByText('Free plan')).toBeTruthy());
+  });
+
+  it('still says free when the server sends an organization with no plan', async () => {
+    // Organizations written before the field existed have none; the pill must not be blank.
+    const legacy = { ...ORG } as Partial<typeof ORG>;
+    delete legacy.plan;
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        const url = String(input);
+        if (url.endsWith('/api/orgs')) {
+          return { ok: true, status: 200, json: async () => ({ orgs: [legacy] }) };
+        }
+        return { ok: true, status: 200, json: async () => route(url) };
+      }),
+    );
+    render(<WorkspacePanel onClose={() => undefined} />);
+    await waitFor(() => expect(screen.getByText('Free plan')).toBeTruthy());
   });
 
   it('labels unmeasured metrics as unavailable rather than zero', async () => {

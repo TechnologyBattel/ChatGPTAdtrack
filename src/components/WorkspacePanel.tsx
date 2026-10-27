@@ -17,6 +17,7 @@ import {
   listSources,
   listTopics,
   listWorkspaces,
+  planOf,
   type Campaign,
   type Lead,
   type Organization,
@@ -73,6 +74,8 @@ export default function WorkspacePanel({ onClose }: { onClose: () => void }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
+  // The plan of the organization currently selected. Display only — no feature is gated.
+  const selectedPlan = planOf(state.orgs.find((o) => o.organizationId === state.orgId));
 
   // This panel covers the page, so it has to behave like a dialog: announce itself, take
   // focus, and close on Escape. Without that a keyboard or screen-reader user is stuck in
@@ -217,6 +220,15 @@ export default function WorkspacePanel({ onClose }: { onClose: () => void }) {
                   </option>
                 ))}
               </select>
+              {/* Plan is per-organization, so it belongs beside the selector rather than
+                  in a global footer badge that would misreport a second organization.
+                  Read-only: nothing is gated on it yet. */}
+              <span
+                className="rounded-full border border-line bg-white px-2 py-0.5 text-[11px] text-muted"
+                title="Your current plan. See docs/PRICING.md for what each plan includes."
+              >
+                {selectedPlan === 'pro' ? 'Pro plan' : 'Free plan'}
+              </span>
               {state.workspaces.length > 0 && (
                 <>
                   <label className="ml-2 text-[11px] text-muted" htmlFor="ws-select">

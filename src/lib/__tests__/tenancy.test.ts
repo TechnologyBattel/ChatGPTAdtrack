@@ -159,6 +159,28 @@ describe('organizations and workspaces', () => {
     expect(mine.body.orgs[0].organizationId).toBe(org.body.organizationId);
   });
 
+  it('puts a new organization on the free plan, and says so on every read', async () => {
+    const created = await h.call('tok-owner', 'POST', '/api/orgs', { name: 'Free Co' });
+    expect(created.body.plan).toBe('free');
+
+    const mine = await h.call('tok-owner', 'GET', '/api/orgs');
+    expect(mine.body.orgs[0].plan).toBe('free');
+  });
+
+  it('reports free for an organization written before the plan field existed', async () => {
+    // A record from before this field shipped has no `plan`; it must not render blank.
+    const store = h.store;
+    await store.records.put('organizations', 'org_legacy', { organizationId: 'org_legacy', name: 'Legacy' });
+    await store.records.put('memberships', 'org_legacy__u_owner', {
+      organizationId: 'org_legacy',
+      userId: 'u_owner',
+      role: 'owner',
+    });
+    const mine = await h.call('tok-owner', 'GET', '/api/orgs');
+    const legacy = mine.body.orgs.find((o: { organizationId: string }) => o.organizationId === 'org_legacy');
+    expect(legacy.plan).toBe('free');
+  });
+
   it('stores geography, language, zone and currency as structured fields', async () => {
     const { ws } = await seed(h);
     expect(ws).toMatchObject({
@@ -422,7 +444,15 @@ describe('the health endpoint reports capability honestly', () => {
   it('says whether tenancy and tenant ingest are wired', async () => {
     const h = harness();
     const res = await h.call('tok-owner', 'GET', '/api/health');
-    expect(res.body.features).toEqual({ tenancy: true, tenantIngest: true, legacyIngest: false });
+    // `privateResearch` joined this block on 2026-10-27 (Private Research Mode slice 1).
+    // This harness does not wire the module, so the capability must read as absent — the UI
+    // relies on that to hide the control.
+    expect(res.body.features).toEqual({
+      tenancy: true,
+      tenantIngest: true,
+      legacyIngest: false,
+      privateResearch: false,
+    });
   });
 });
 
@@ -448,7 +478,15 @@ describe('matrix snapshot', () => {
   it('matches the documented permissions exactly', () => {
     expect(permissionsFor('viewer')).toEqual(['data.read', 'research.read', 'campaign.read', 'lead.read']);
     expect(permissionsFor('analyst')).toContain('report.export');
-    expect(permissionsFor('owner')).toHaveLength(13);
+    // 13 -> 14 on 2026-10-27: `research.private` was added for Private Research Mode slice 1
+    // (docs/PRIVATE_RESEARCH_MODE.md §2.4). An owner holds every permission by construction,
+    // and the new one is granted to editor/admin/owner only — the roles that already hold
+    // `research.write`.
+    expect(permissionsFor('owner')).toHaveLength(14);
+    expect(permissionsFor('editor')).toContain('research.private');
+    expect(permissionsFor('admin')).toContain('research.private');
+    expect(permissionsFor('viewer')).not.toContain('research.private');
+    expect(permissionsFor('analyst')).not.toContain('research.private');
     vi.restoreAllMocks();
   });
 });

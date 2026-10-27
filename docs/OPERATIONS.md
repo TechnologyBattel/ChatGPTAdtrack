@@ -111,3 +111,42 @@ currently alerts on "sweep has not run".
 No metrics endpoint, no tracing, no synthetic uptime probe, no alert delivery. Everything
 in §2 is a definition to be wired, not a working system. This is stated as a gap in the
 Phase 4 report rather than implied by a table.
+
+## Private research (slice 1)
+
+**State:** implemented, off by default, **not plan-gated**.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `PRIVATE_RESEARCH_ENABLED` | `false` | The only switch. Server-wide; no per-org or per-workspace setting exists. |
+| `PRIVATE_RESEARCH_PROVIDERS` | `openai` | Named providers only (`openai`, `anthropic`). |
+| `PRIVATE_RESEARCH_MODELS` | provider defaults | `provider:model` allowlist. |
+| `PRIVATE_RESEARCH_TIMEOUT_MS` | `20000` | Per-call wall clock. |
+| `PRIVATE_RESEARCH_MAX_CLUSTERS` | `40` | Clusters per request. |
+| `PRIVATE_RESEARCH_MAX_RESPONSE_BYTES` | `262144` | Response cap, applied before parsing. |
+| `PRIVATE_RESEARCH_PER_MINUTE` | `20` | Per actor, **per process** (see the limiter note above). |
+
+Boot prints one line saying whether it is enabled and which providers are on, so an operator
+never has to guess.
+
+**Nothing is stored, so there is no key material to rotate.** Rotating a user's provider key
+is the user's action: they paste a new one.
+
+### Status-code precedence, and the disclosure it implies
+
+The approved order is: flag off → fixed `404 not_configured`; flag on → `401`; outsider →
+`404`; member without `research.private` → `403`; only then is provider status disclosed.
+
+The flag check deliberately happens **before authentication**, so a signed-out probe gets the
+same answer as for a route that does not exist. The consequence, accepted explicitly: **the
+pair of responses reveals whether private research is enabled on this deployment** (`404` =
+off, `401` = on). It reveals nothing else — the disabled body names no provider or model.
+If hiding even that becomes a requirement, the order must be changed to authenticate first,
+which is a product decision, not a code tweak.
+
+### When it misbehaves
+
+- `provider_key_rejected` — the user's key was refused. Nothing was stored; they can retry.
+- `rate_limited` / `busy` — per-process limits; a restart clears them.
+- `audit_unavailable` — the audit write failed and the run was discarded. Investigate the
+  datastore; a run is never reported as successful without its audit line.

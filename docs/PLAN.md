@@ -1,4 +1,4 @@
-# AdTrack — Repository Review & Build Plan
+# AI AdTracker — Repository Review & Build Plan
 
 _Date: 2026-10-24 · Branch: `arena/b0e01b66-chatgptadtrack` · Baseline commit: `a984a6f`_
 

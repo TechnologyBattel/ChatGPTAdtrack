@@ -255,7 +255,3 @@ export function buildDataset(days = 90, endDate = '2026-10-24'): Dataset {
 export function campaignOf(dataset: Dataset, id: string): Campaign | undefined {
   return dataset.campaigns.find((c) => c.id === id);
 }
-
-export function adGroupOf(dataset: Dataset, id: string): AdGroup | undefined {
-  return dataset.adGroups.find((g) => g.id === id);
-}

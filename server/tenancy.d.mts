@@ -13,6 +13,7 @@ export interface Org {
   createdAt: number;
   createdBy: string;
   role?: string;
+  plan?: 'free' | 'pro';
 }
 export interface Membership {
   organizationId: string;

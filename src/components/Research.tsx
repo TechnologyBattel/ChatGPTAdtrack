@@ -1,5 +1,17 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { SAMPLE_SEEDS, runResearch, scoreBreakdown, toCsv, type Cluster, type ResearchResult } from '../lib/research';
+import {
+  SAMPLE_SEEDS,
+  normalizeSeeds,
+  runResearch,
+  scoreBreakdown,
+  toCsv,
+  type Cluster,
+  type ResearchResult,
+} from '../lib/research';
+import { getHealth } from '../lib/api';
+import { listOrganizations } from '../lib/agency';
+import { getPrivateStatus, type PrivateName, type PrivateStatus } from '../lib/private-research';
+import PrivateResearchPanel from './PrivateResearchPanel';
 import { byAdGroup, formatMoney, formatPercent, formatRatio } from '../lib/metrics';
 import type { Dataset } from '../lib/types';
 import PushHints, { type TargetAdGroup } from './PushHints';
@@ -61,14 +73,67 @@ export default function Research({
 
   const onAudit = useCallback((entries: AuditEntry[]) => setAudit(entries), []);
 
+  // Model-generated names live HERE and nowhere else: a display overlay keyed by cluster id,
+  // never merged into `result`. The deterministic clusters stay the source of truth, so a
+  // failed or cleared run simply shows the original names again. Nothing is pushed, saved or
+  // written to the audit store from this state.
+  const [namesById, setNamesById] = useState<Record<string, string>>({});
+  // Private mode is optional and server-controlled: it renders only when the server says so.
+  const [privateStatus, setPrivateStatus] = useState<PrivateStatus | null>(null);
+  const [orgId, setOrgId] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        // Ask the server whether the capability exists before touching its routes. Probing a
+        // route that is switched off would log a 404 in the console of every session.
+        const health = await getHealth();
+        if (!health.details?.features?.privateResearch || cancelled) return;
+        const orgs = await listOrganizations();
+        const first = orgs[0];
+        if (!first || cancelled) return;
+        const status = await getPrivateStatus(first.organizationId);
+        if (cancelled) return;
+        setOrgId(first.organizationId);
+        setPrivateStatus(status);
+      } catch {
+        // No agency, no session, or the feature is off: the panel simply does not render.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // A pushed hint set should be visible on the page immediately, not only in the log.
   const [pushed, setPushed] = useState<Record<string, string[]>>({});
   const handlePushed = useCallback((adGroupId: string, after: string[]) => {
     setPushed((prev) => ({ ...prev, [adGroupId]: after }));
   }, []);
 
+  // Seed id -> seed text, so a cluster can carry its own seeds to the naming panel. Derived
+  // from the same deterministic normalisation the pipeline uses; nothing is fetched.
+  const seedText = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const seed of normalizeSeeds(raw)) map.set(seed.id, seed.text);
+    return map;
+  }, [raw]);
+
+  // A handful of representative seeds per cluster is enough for a name and keeps the request
+  // small and bounded.
+  const seedsById = useCallback(
+    (ids: string[]) =>
+      ids
+        .map((id) => seedText.get(id))
+        .filter((text): text is string => Boolean(text))
+        .slice(0, 40),
+    [seedText],
+  );
+
   const run = () => {
     const r = runResearch(raw, granularity);
+    setNamesById({});
     setResult(r);
     setOpen(r.clusters[0]?.id ?? null);
   };
@@ -90,7 +155,7 @@ export default function Research({
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'adtrack-hints.csv';
+    a.download = 'ai-adtracker-hints.csv';
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -187,6 +252,21 @@ export default function Research({
               </button>
             </div>
 
+            {privateStatus && orgId && (
+              <div className="mb-3">
+                <PrivateResearchPanel
+                  orgId={orgId}
+                  status={privateStatus}
+                  clusters={result.clusters.map((c) => ({
+                    id: c.id,
+                    label: c.name,
+                    seeds: seedsById(c.seedIds),
+                  }))}
+                  onNamed={(names: PrivateName[]) => setNamesById(Object.fromEntries(names.map((n) => [n.id, n.name])))}
+                  onClear={() => setNamesById({})}
+                />
+              </div>
+            )}
             <ul className="space-y-2">
               {result.clusters.map((c) => {
                 const isOpen = open === c.id;
@@ -203,7 +283,10 @@ export default function Research({
                         {(c.score * 100).toFixed(0)}
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-[13px] text-ink">{c.name}</span>
+                        <span className="block truncate text-[13px] text-ink">{namesById[c.id] ?? c.name}</span>
+                        {namesById[c.id] && (
+                          <span className="ml-1 rounded bg-cloud px-1 text-[10px] text-muted">model-named</span>
+                        )}
                         <span className="block text-[11px] text-muted">
                           {c.size} seeds · {c.intent} · {c.landingPath}
                           {c.coverageGap ? ' · coverage gap' : ''}
@@ -298,7 +381,7 @@ export default function Research({
                                 ))}
                               </select>
                             ) : (
-                              <span className="text-[11px] text-[#80868b]">no ad groups loaded</span>
+                              <span className="text-[11px] text-subtle">no ad groups loaded</span>
                             )}
                             <span className="num text-[11px] text-muted">
                               {(pushed[targets[c.id] ?? adGroups[0]?.id ?? ''] ?? targetHintsOf(c.id)).length} hints now

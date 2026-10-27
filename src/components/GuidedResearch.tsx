@@ -61,7 +61,7 @@ function Badge({ children, tone = 'muted' }: { children: React.ReactNode; tone?:
   const tones: Record<string, string> = {
     muted: 'bg-cloud text-muted',
     warn: 'bg-[#fef7e0] text-[#8a6d00]',
-    bad: 'bg-[#fce8e6] text-[#b3261e]',
+    bad: 'bg-dangerSoft text-danger',
     ok: 'bg-brandSoft text-brand',
   };
   return <span className={`rounded-full px-2 py-0.5 text-[11px] ${tones[tone]}`}>{children}</span>;
@@ -117,7 +117,7 @@ function FindingCard({ finding }: { finding: Finding }) {
       {finding.limitations.length > 0 && (
         <ul className="mt-2 space-y-0.5">
           {finding.limitations.map((l, i) => (
-            <li key={`${finding.id}-lim-${i}`} className="text-[10.5px] leading-relaxed text-[#80868b]">
+            <li key={`${finding.id}-lim-${i}`} className="text-[10.5px] leading-relaxed text-subtle">
               — {l}
             </li>
           ))}
@@ -284,7 +284,7 @@ function ConnectorCard({
             </p>
           )}
           {status.lastError && (
-            <p className="mt-1 rounded bg-[#fce8e6] px-2 py-1 text-[11px] text-[#b3261e]">
+            <p className="mt-1 rounded bg-dangerSoft px-2 py-1 text-[11px] text-danger">
               {status.lastError.code}: {status.lastError.message}
             </p>
           )}
@@ -294,7 +294,7 @@ function ConnectorCard({
               {lastSync.skipped} skipped · {lastSync.pages} page(s). {lastSync.countsSemantics}.
             </p>
           )}
-          {error && <p className="mt-1 text-[11px] text-[#b3261e]">{error}</p>}
+          {error && <p className="mt-1 text-[11px] text-danger">{error}</p>}
 
           <div className="mt-2 flex flex-wrap gap-1.5">
             {(status.status === 'not_connected' || status.status === 'disconnected' || status.status === 'failed') && (
@@ -527,7 +527,7 @@ export default function GuidedResearch({ onNeedSignIn }: { onNeedSignIn?: () => 
         testId="guided-research"
       >
         {loadingOrgs && <p className="text-[11px] text-muted">Loading the agencies you belong to…</p>}
-        {orgError && <p className="text-[11px] text-[#b3261e]">{orgError}</p>}
+        {orgError && <p className="text-[11px] text-danger">{orgError}</p>}
 
         {!loadingOrgs && !orgError && (orgs.data?.length ?? 0) === 0 && (
           <p className="text-[11.5px] leading-relaxed text-muted">
@@ -587,7 +587,7 @@ export default function GuidedResearch({ onNeedSignIn }: { onNeedSignIn?: () => 
               </p>
             )}
 
-            {plan.isError && <p className="text-[11px] text-[#b3261e]">{messageOf(plan.error)}</p>}
+            {plan.isError && <p className="text-[11px] text-danger">{messageOf(plan.error)}</p>}
 
             {plan.data && (
               <>
@@ -637,7 +637,7 @@ export default function GuidedResearch({ onNeedSignIn }: { onNeedSignIn?: () => 
                 </div>
 
                 {runMutation.isError && (
-                  <p className="rounded bg-[#fce8e6] px-2 py-1 text-[11px] text-[#b3261e]">
+                  <p className="rounded bg-dangerSoft px-2 py-1 text-[11px] text-danger">
                     {messageOf(runMutation.error)}
                   </p>
                 )}
@@ -705,7 +705,7 @@ export default function GuidedResearch({ onNeedSignIn }: { onNeedSignIn?: () => 
                   type="button"
                   onClick={() => scope && deleteRun.mutate({ ...scope, runId: r.runId })}
                   disabled={!canSaveResearch || deleteRun.isPending}
-                  className="text-[10.5px] text-muted underline decoration-line hover:text-[#b3261e] disabled:opacity-50"
+                  className="text-[10.5px] text-muted underline decoration-line hover:text-danger disabled:opacity-50"
                 >
                   delete
                 </button>

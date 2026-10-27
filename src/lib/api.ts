@@ -18,6 +18,8 @@ export type HealthDetails = {
   auth?: { mode: 'dev' | 'firebase'; role: string; canWrite: boolean };
   storage?: { kind: 'memory' | 'firestore'; ok: boolean };
   outbox?: { pending: number; dead: number; delivered: number } | null;
+  /** Capabilities the server has wired. A false value means the UI hides the control. */
+  features?: { tenancy?: boolean; tenantIngest?: boolean; legacyIngest?: boolean; privateResearch?: boolean };
   account?: { id: string; name: string; currency: string; timezone: string; status: string; review: string };
 };
 

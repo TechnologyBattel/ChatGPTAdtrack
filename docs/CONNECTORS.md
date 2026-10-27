@@ -2,7 +2,7 @@
 
 _Date: 2026-10-26 · Code: `server/sources.mjs`, `server/ingest.mjs`, `server/app.mjs`, `server/connectors/*.mjs`_
 
-This document defines how a data source connects to AdTrack. It is a **contract**, and
+This document defines how a data source connects to AI AdTracker. It is a **contract**, and
 that is all: every provider that exists in code today is a *category*, not an integration.
 There is no OpenAI Ads client, no HubSpot client, no Google Search Console client, and no
 sample payload that pretends to be one.

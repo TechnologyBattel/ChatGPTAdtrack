@@ -76,7 +76,7 @@ export default function Chart({ points, metric, currency }: Props) {
       </svg>
       <div className="mt-1 flex justify-between text-[11px] text-muted">
         <span>{points[0].date.slice(5)}</span>
-        {prelimStart && <span className="text-[#80868b]">shaded = provisional (last 2 days)</span>}
+        {prelimStart && <span className="text-subtle">shaded = provisional (last 2 days)</span>}
         <span>{points[points.length - 1].date.slice(5)}</span>
       </div>
     </div>

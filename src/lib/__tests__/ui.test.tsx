@@ -21,7 +21,7 @@ describe('single page shell', () => {
     render(<App />);
     expect(screen.getByRole('searchbox')).toBeTruthy();
     expect(screen.queryAllByRole('link')).toHaveLength(1); // only the docs link
-    expect(screen.getByText(/Ask your ChatGPT ads one question/i)).toBeTruthy();
+    expect(screen.getByText(/Ask plain-language questions about your ChatGPT ads/i)).toBeTruthy();
   });
 
   it('answers a spend question inline on the same page', () => {

@@ -206,7 +206,8 @@ function AppShell() {
             <div className="mb-6 text-center">
               <Wordmark />
               <p className="mt-2 text-[14px] text-muted">
-                Ask your ChatGPT ads one question. Get one answer: spend → leads → customers → revenue → where.
+                Ask plain-language questions about your ChatGPT ads and get clear answers. Research conversation-shaped
+                hints that map to revenue.
               </p>
             </div>
             <SearchBar
@@ -285,7 +286,7 @@ function AppShell() {
             <span className="rounded-full bg-cloud px-2 py-0.5">
               {asked.mode === 'research' ? 'research' : spec?.intent}
             </span>
-            {source === 'live' && <span className="ml-2 text-[#80868b]">live account data · cached 5 min</span>}
+            {source === 'live' && <span className="ml-2 text-subtle">live account data · cached 5 min</span>}
           </p>
           {asked.mode === 'research' || !spec ? (
             <div className="mb-5">

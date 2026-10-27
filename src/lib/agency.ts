@@ -30,7 +30,23 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export type Organization = { organizationId: string; name: string; slug: string; role: string };
+/**
+ * Billing plan. Data only: nothing is gated on it yet (see docs/PRICING.md), and no
+ * quota or workspace limit reads it. Optional because an organization written before
+ * the field existed has none — `planOf` supplies the default.
+ */
+export type Plan = 'free' | 'pro';
+
+export type Organization = {
+  organizationId: string;
+  name: string;
+  slug: string;
+  role: string;
+  plan?: Plan;
+};
+
+/** The plan to display for an organization; absent means free. */
+export const planOf = (org?: { plan?: Plan } | null): Plan => org?.plan ?? 'free';
 
 export type WorkspaceSummaryRow = {
   workspaceId: string;

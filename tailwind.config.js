@@ -12,6 +12,12 @@ export default {
         brandSoft: '#e8f0fe',
         good: '#137333',
         warn: '#b06000',
+        // Secondary text. Deliberately NOT a lighter grey than --muted: the previous
+        // hardcoded #80868b measured 3.68:1 on white, which fails WCAG AA (4.5:1) for
+        // normal text — and it was used at 10.5–11px. This value measures 4.65:1.
+        subtle: '#70757a',
+        danger: '#b3261e',
+        dangerSoft: '#fce8e6',
       },
       fontFamily: {
         sans: ['system-ui', '-apple-system', 'Segoe UI', 'Roboto', 'Helvetica Neue', 'Arial', 'sans-serif'],

@@ -35,6 +35,7 @@ export declare function createApp(deps: {
   store: Store;
   /** Tenancy/agency routes. Without it, `/api/orgs*` 404s rather than half-working. */
   agency?: AgencyApi | null;
+  privateResearch?: { enabled: boolean } | null;
   /** Per-tenant ingest key resolution. */
   sources?: Sources | null;
   /** Validates and persists v2 lead events. */

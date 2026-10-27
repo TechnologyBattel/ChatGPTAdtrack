@@ -152,12 +152,12 @@ export default function PushHints({ adGroup, candidateHints, live, disabledReaso
         }}
         disabled={disabled}
         title={blockedReason ?? 'Review the diff, then confirm'}
-        className="rounded-full border border-line px-3 py-1 text-[11px] text-ink transition hover:bg-cloud disabled:cursor-not-allowed disabled:border-dashed disabled:text-[#80868b] disabled:hover:bg-transparent"
+        className="rounded-full border border-line px-3 py-1 text-[11px] text-ink transition hover:bg-cloud disabled:cursor-not-allowed disabled:border-dashed disabled:text-subtle disabled:hover:bg-transparent"
       >
         Push to ad group
       </button>
 
-      {blockedReason && <span className="text-[11px] text-[#80868b]">{blockedReason}</span>}
+      {blockedReason && <span className="text-[11px] text-subtle">{blockedReason}</span>}
 
       {undo && !undoBusy && (
         <button
@@ -223,7 +223,7 @@ export default function PushHints({ adGroup, candidateHints, live, disabledReaso
                         <li
                           key={hint}
                           className={`rounded-md px-2 py-1 text-[12px] leading-5 ${
-                            removing ? 'bg-[#fce8e6] text-[#a50e0e] line-through' : 'bg-cloud text-ink'
+                            removing ? 'bg-dangerSoft text-[#a50e0e] line-through' : 'bg-cloud text-ink'
                           }`}
                         >
                           {hint}
@@ -256,7 +256,7 @@ export default function PushHints({ adGroup, candidateHints, live, disabledReaso
               {state.kind === 'error' && (
                 <p
                   role="alert"
-                  className="mt-3 rounded-md border border-[#f6aea9] bg-[#fce8e6] px-2.5 py-1.5 text-[12px] leading-5 text-[#a50e0e]"
+                  className="mt-3 rounded-md border border-[#f6aea9] bg-dangerSoft px-2.5 py-1.5 text-[12px] leading-5 text-[#a50e0e]"
                 >
                   {state.message}
                 </p>

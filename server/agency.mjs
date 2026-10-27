@@ -12,6 +12,7 @@
 
 import { randomBytes } from 'node:crypto';
 import { ApiError } from './errors.mjs';
+import { PRIVATE_ERROR_CODES } from './private-research.mjs';
 import { freshnessOf } from './freshness.mjs';
 import { permissionsFor } from './tenancy.mjs';
 import { createResearch } from './research.mjs';
@@ -39,7 +40,14 @@ const isoDate = (value, field) => {
   return value;
 };
 
-export function createAgencyApi({ tenancy, store, sources = null, research = null, now = () => Date.now() } = {}) {
+export function createAgencyApi({
+  tenancy,
+  store,
+  sources = null,
+  research = null,
+  privateResearch = null,
+  now = () => Date.now(),
+} = {}) {
   if (!tenancy) throw new Error('createAgencyApi requires tenancy.');
   if (!store?.records) throw new Error('createAgencyApi requires a store with records.');
   // Guided research reads the same records as the rest of the agency API. It is created
@@ -447,6 +455,118 @@ export function createAgencyApi({ tenancy, store, sources = null, research = nul
     };
   }
 
+  // ------------------------------------------------------- private research
+  //
+  // Only cluster NAMING lives here. The deterministic pipeline computes the clusters in the
+  // browser; this route receives ids it already produced and returns names for those same
+  // ids. Authorization is the first thing that happens — before any provider detail is read,
+  // disclosed or called — so a 403 cannot reveal whether a provider is configured.
+  //
+  // The audit record is the only write in this feature, and it is written from a fixed
+  // allowlist built by `privateResearch.auditDetail`. If that write fails, the run is NOT
+  // reported as successful and no names are returned: we do not report a run our audit
+  // policy could not record. The provider call may already have happened by then; that cost
+  // cannot be undone, and inventing a success would be worse than admitting the failure.
+
+  async function privateContext(principal, orgId) {
+    if (!privateResearch) {
+      throw new ApiError(404, 'not_configured', 'Private research is not configured on this server.');
+    }
+    return tenancy.context(principal, orgId, 'research.private');
+  }
+
+  async function recordPrivateRun({ ctx, orgId, actor, detail }) {
+    try {
+      return await tenancy.audit({
+        action: 'research.private.run',
+        organizationId: orgId,
+        // Org-scoped on purpose: there is no per-workspace enablement in slice 1, so there
+        // is no workspace to attribute the run to.
+        workspaceId: null,
+        actor,
+        actorRole: ctx.role,
+        target: null,
+        ok: detail.outcome === 'ok',
+        detail,
+      });
+    } catch {
+      throw new ApiError(503, 'audit_unavailable', 'The run could not be recorded and was discarded.');
+    }
+  }
+
+  async function runPrivateNaming({ principal, orgId, body }) {
+    const ctx = await privateContext(principal, orgId);
+
+    // Provider/model are validated first so the audit entry can carry real values. A request
+    // naming something that is not an enabled provider cannot be expressed in the approved
+    // audit schema at all, so it is refused without an entry rather than logged with a
+    // fabricated provider.
+    const provider = body?.provider;
+    const model = body?.model;
+    const clusters = body?.clusters;
+    const knownProvider = privateResearch.status().providers.includes(provider);
+    const knownModel = knownProvider && (privateResearch.models?.[provider] ?? []).includes(model);
+    const clusterCount = Array.isArray(clusters) ? clusters.length : 0;
+
+    const finish = async (detail) => {
+      await recordPrivateRun({ ctx, orgId, actor: principal.uid, detail });
+    };
+
+    if (!knownProvider || !knownModel) {
+      // Still one audit entry when the pair is expressible (a known provider with a bad
+      // model); otherwise the schema cannot represent it.
+      if (knownProvider) {
+        await finish({
+          provider,
+          model: model,
+          clusterCount: Math.max(1, clusterCount),
+          outcome: 'rejected',
+          errorCode: 'invalid_model',
+        });
+      }
+      throw new ApiError(
+        400,
+        knownProvider ? 'invalid_model' : 'invalid_provider',
+        'That provider or model is not enabled on this server.',
+      );
+    }
+
+    try {
+      const result = await privateResearch.run({
+        actor: principal.uid,
+        provider,
+        model,
+        apiKey: body.apiKey,
+        clusters,
+      });
+      await finish({
+        provider: result.provider,
+        model: result.model,
+        clusterCount: result.names.length,
+        outcome: 'ok',
+      });
+      return result;
+    } catch (error) {
+      const code = PRIVATE_ERROR_CODES.includes(error?.code) ? error.code : 'internal_error';
+      const outcome =
+        code === 'provider_timeout'
+          ? 'timeout'
+          : code === 'invalid_provider_output'
+            ? 'invalid_output'
+            : code === 'rate_limited' || code === 'busy' || code === 'invalid_request'
+              ? 'rejected'
+              : 'provider_error';
+      await finish({
+        provider,
+        model,
+        clusterCount: Math.max(1, clusterCount),
+        outcome,
+        errorCode: code,
+      });
+      throw error;
+    }
+  }
+
   // ------------------------------------------------------------------- routing
 
   const ROUTES = [
@@ -673,6 +793,20 @@ export function createAgencyApi({ tenancy, store, sources = null, research = nul
           workspaceId: params[1],
           runId: params[2],
         }),
+    ],
+    [
+      'GET',
+      /^\/api\/orgs\/([^/]+)\/research\/private$/,
+      async ({ principal, params }) => {
+        await privateContext(principal, params[0]);
+        // Provider status is disclosed only after authorization has succeeded.
+        return privateResearch.status();
+      },
+    ],
+    [
+      'POST',
+      /^\/api\/orgs\/([^/]+)\/research\/private\/run$/,
+      ({ principal, params, body }) => runPrivateNaming({ principal, orgId: params[0], body }),
     ],
     [
       'GET',

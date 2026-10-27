@@ -95,7 +95,7 @@ export default function ConnectionBar({ health, loading, onRetry, compact }: Pro
             <button type="button" onClick={onRetry} className="text-brand hover:underline">
               Retry connection
             </button>
-            <span className="text-[#80868b]">
+            <span className="text-subtle">
               Configure the server with OPENAI_ADS_API_KEY, OPENAI_CONVERSIONS_API_KEY and OPENAI_PIXEL_ID.
             </span>
           </div>

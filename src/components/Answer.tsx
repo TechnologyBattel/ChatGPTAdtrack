@@ -159,7 +159,7 @@ export default function Answer({ spec, dataset, settings, onFollowUp, live = fal
       <header className="mb-5">
         <h1 className="max-w-3xl text-[22px] font-normal leading-8 text-ink sm:text-[24px]">{spec.headline}</h1>
         {spec.subline && <p className="mt-1.5 max-w-3xl text-[14px] leading-6 text-muted">{spec.subline}</p>}
-        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[#80868b]">
+        <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-subtle">
           <span className="rounded-full bg-cloud px-2 py-0.5">last {spec.windowDays} days</span>
           <span>{settings.timezone}</span>
           <span>·</span>

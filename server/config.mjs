@@ -304,6 +304,86 @@ export function resolveConfig(env = {}) {
         scopesNote: 'read-only: crm.objects.contacts.read, crm.objects.deals.read',
       },
     },
+    privateResearch: (() => {
+      // Slice 1 is a server-wide beta: off unless an operator turns it on. There is no
+      // per-organization or per-workspace setting, so this is the only switch.
+      const rawEnabled = String(env.PRIVATE_RESEARCH_ENABLED ?? 'false')
+        .trim()
+        .toLowerCase();
+      if (!['true', 'false'].includes(rawEnabled)) {
+        throw new ConfigError('PRIVATE_RESEARCH_ENABLED must be "true" or "false".');
+      }
+      const enabled = rawEnabled === 'true';
+
+      const KNOWN = ['openai', 'anthropic'];
+      const csv = (raw) =>
+        String(raw ?? '')
+          .split(',')
+          .map((v) => v.trim())
+          .filter(Boolean);
+
+      const providers = csv(env.PRIVATE_RESEARCH_PROVIDERS || 'openai');
+      // Named providers only: a caller can never supply a host, and an unknown name here is
+      // a boot failure rather than a request-time surprise.
+      for (const provider of providers) {
+        if (!KNOWN.includes(provider)) {
+          throw new ConfigError(`PRIVATE_RESEARCH_PROVIDERS may only contain ${KNOWN.join(', ')}; got "${provider}".`);
+        }
+      }
+      if (providers.length === 0) {
+        throw new ConfigError('PRIVATE_RESEARCH_PROVIDERS must name at least one provider.');
+      }
+
+      // `provider:model` pairs. Unset means the documented defaults (design §2.3).
+      const DEFAULT_MODELS = {
+        openai: ['gpt-4o-mini'],
+        anthropic: ['claude-3-5-haiku-latest'],
+      };
+      const models = { openai: [], anthropic: [] };
+      const modelSpec = csv(env.PRIVATE_RESEARCH_MODELS);
+      for (const entry of modelSpec.length > 0
+        ? modelSpec
+        : providers.flatMap((p) => DEFAULT_MODELS[p].map((m) => `${p}:${m}`))) {
+        const [provider, model] = entry.split(':').map((v) => v.trim());
+        if (!provider || !model || !KNOWN.includes(provider)) {
+          throw new ConfigError(`PRIVATE_RESEARCH_MODELS entries must look like "openai:gpt-4o-mini"; got "${entry}".`);
+        }
+        models[provider].push(model);
+      }
+      for (const provider of providers) {
+        if (models[provider].length === 0) {
+          throw new ConfigError(
+            `PRIVATE_RESEARCH_MODELS must name at least one model for the enabled provider "${provider}".`,
+          );
+        }
+      }
+
+      return {
+        enabled,
+        providers,
+        models,
+        timeoutMs: int(env.PRIVATE_RESEARCH_TIMEOUT_MS, 20000, {
+          min: 1000,
+          max: 120000,
+          field: 'PRIVATE_RESEARCH_TIMEOUT_MS',
+        }),
+        maxClusters: int(env.PRIVATE_RESEARCH_MAX_CLUSTERS, 40, {
+          min: 1,
+          max: 200,
+          field: 'PRIVATE_RESEARCH_MAX_CLUSTERS',
+        }),
+        maxResponseBytes: int(env.PRIVATE_RESEARCH_MAX_RESPONSE_BYTES, 262144, {
+          min: 1024,
+          max: 4 * 1024 * 1024,
+          field: 'PRIVATE_RESEARCH_MAX_RESPONSE_BYTES',
+        }),
+        perMinute: int(env.PRIVATE_RESEARCH_PER_MINUTE, 20, {
+          min: 1,
+          max: 10000,
+          field: 'PRIVATE_RESEARCH_PER_MINUTE',
+        }),
+      };
+    })(),
     observability: {
       // `json` is what a log pipeline should receive; `text` is for a terminal. Production
       // defaults to json so an alert can match fields rather than prose.

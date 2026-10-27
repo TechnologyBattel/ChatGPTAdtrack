@@ -10,7 +10,6 @@ feature sets of Ahrefs / Semrush / Keyword Insights / Keyword Cupid as used in p
 | **live-verified** | Exercised end-to-end through our HTTP server against a **stub** of the OpenAI Ads API (`scripts/e2e-push.mjs`). Proves our code, not their contract. |
 | **demo** | Works on deterministic demo data; no ad account has been connected. |
 | **UI-only** | Component behaviour verified in tests; no upstream call involved. |
-| **e2e-not-run** | Specs exist (`e2e/`), but no browser binary was available in the build environment; results are UNKNOWN. |
 | **not started** | Planned, not built. |
 
 No feature in this repository has been run against a **real** OpenAI ad account —

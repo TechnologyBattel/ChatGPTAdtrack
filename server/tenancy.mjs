@@ -52,6 +52,10 @@ export const PERMISSIONS = [
   'member.manage',
   'source.manage',
   'adaccount.push',
+  // Private research: send clusters to a provider with the caller's own key. Granted only
+  // to the roles that already hold `research.write`, because a model-named hint set is
+  // research output and those roles already own that output.
+  'research.private',
 ];
 
 const MATRIX = {
@@ -61,6 +65,7 @@ const MATRIX = {
     'data.read',
     'research.read',
     'research.write',
+    'research.private',
     'campaign.read',
     'campaign.write',
     'lead.read',
@@ -71,6 +76,7 @@ const MATRIX = {
     'data.read',
     'research.read',
     'research.write',
+    'research.private',
     'campaign.read',
     'campaign.write',
     'lead.read',
@@ -167,7 +173,9 @@ export function createTenancy({ store, now = () => Date.now() } = {}) {
     const out = [];
     for (const membership of memberships) {
       const org = await store.records.get('organizations', membership.organizationId);
-      if (org) out.push({ ...org, role: membership.role });
+      // `plan` was added after the first organizations were written, so a record that
+      // predates it is normalised here rather than rendering an empty plan in the UI.
+      if (org) out.push({ ...org, role: membership.role, plan: org.plan ?? 'free' });
     }
     return out.sort((a, b) => a.name.localeCompare(b.name));
   }
@@ -212,6 +220,9 @@ export function createTenancy({ store, now = () => Date.now() } = {}) {
         .slice(0, 48),
       createdAt: stamp(),
       createdBy: principal.uid,
+      // Billing plan is data, not policy: nothing enforces it yet (see docs/PRICING.md).
+      // Every organization starts free; a later change promotes it.
+      plan: 'free',
     };
     await store.records.put('organizations', record.organizationId, record);
     await store.records.put('memberships', `${record.organizationId}__${principal.uid}`, {

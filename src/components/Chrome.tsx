@@ -3,10 +3,10 @@ import type { ReactNode } from 'react';
 export function Wordmark({ size = 'lg' }: { size?: 'sm' | 'lg' }) {
   return (
     <span
-      className={`select-none tracking-tight ${size === 'lg' ? 'text-[46px] leading-none sm:text-[56px]' : 'text-[19px]'}`}
+      className={`select-none tracking-tight ${size === 'lg' ? 'text-[38px] leading-none sm:text-[46px]' : 'text-[17px]'}`}
     >
-      <span className="font-normal text-ink">Ad</span>
-      <span className="font-medium text-brand">Track</span>
+      <span className="font-normal text-ink">AI</span>
+      <span className="ml-1 font-medium text-brand">AdTracker</span>
       <span aria-hidden className="ml-1 inline-block align-baseline text-[0.5em] text-[#f9ab00]">
         ●
       </span>
@@ -35,7 +35,7 @@ export function Header({
       }`}
     >
       <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-2.5">
-        <button onClick={onHome} className="shrink-0" aria-label="AdTrack home">
+        <button onClick={onHome} className="shrink-0" aria-label="AI AdTracker home">
           <Wordmark size="sm" />
         </button>
         <div className="min-w-0 flex-1">{children}</div>
@@ -64,12 +64,15 @@ export function Footer() {
   return (
     <footer className="border-t border-line bg-cloud">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center gap-x-4 gap-y-1 px-4 py-3 text-[12px] text-muted">
-        <span>AdTrack</span>
-        <span aria-hidden>·</span>
-        <span>Demo data, no ad account connected</span>
-        <span aria-hidden>·</span>
+        <span>AI AdTracker</span>
+        {/* Separators are hidden when the footer wraps, so a line never ends on a dangling dot. */}
+        <span aria-hidden className="hidden sm:inline">
+          ·
+        </span>
         <span>Money in minor units (paise)</span>
-        <span aria-hidden>·</span>
+        <span aria-hidden className="hidden sm:inline">
+          ·
+        </span>
         <span>Geography aggregated to city level</span>
         <span className="ml-auto hidden sm:block">Built for ChatGPT Ads, 2026</span>
       </div>

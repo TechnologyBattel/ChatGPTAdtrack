@@ -62,7 +62,7 @@ export default function SearchBar({ mode, onModeChange, onSubmit, compact, initi
           onChange={(e) => setValue(e.target.value)}
           placeholder={mode === 'track' ? 'Ask about your ChatGPT ads…' : 'Paste seed keywords or a topic…'}
           aria-label={mode === 'track' ? 'Ask a question about ad performance' : 'Paste seed keywords'}
-          className="min-w-0 flex-1 bg-transparent py-1.5 text-[15px] text-ink outline-none placeholder:text-[#80868b]"
+          className="min-w-0 flex-1 bg-transparent py-1.5 text-[15px] text-ink outline-none placeholder:text-subtle"
           autoComplete="off"
         />
         <div className="hidden h-6 w-px bg-line sm:block" aria-hidden />
@@ -106,8 +106,7 @@ export default function SearchBar({ mode, onModeChange, onSubmit, compact, initi
       )}
       {!compact && (
         <p className="mt-4 text-center text-[12px] text-muted">
-          Press <kbd className="rounded border border-line bg-cloud px-1 font-mono text-[11px]">/</kbd> to focus · Demo
-          data, no account connected
+          Press <kbd className="rounded border border-line bg-cloud px-1 font-mono text-[11px]">/</kbd> to focus
         </p>
       )}
     </div>

@@ -127,3 +127,45 @@ Consequences worth stating plainly:
 - Disconnecting a CRM clears the sealed credentials and the sync checkpoint immediately.
   Events that already arrived stay, because they are history; they are subject to the same
   retention policy as any other event.
+
+## Private Research Mode (slice 1)
+
+Optional, server-wide, off by default (`PRIVATE_RESEARCH_ENABLED`). When on, an editor, admin
+or owner can ask OpenAI or Anthropic — **using their own API key** — to name clusters that our
+deterministic pipeline already computed in the browser.
+
+### What we promise
+
+> **Your key and seeds pass through our server process in memory, never persisted, never
+> logged.**
+
+- The key arrives in one request, is used for that request, and is dropped. It is not written
+  to any store, log, audit record, URL or error message.
+- Seeds, prompts, provider responses and generated names are **not stored** anywhere: not in
+  our database, not in the browser's local or session storage, not in the URL, not in research
+  history, not in the push/undo audit log.
+- The generated names exist only in the page, until you discard them or reload.
+
+### What we cannot promise
+
+- **The provider sees your content.** The request is sent to OpenAI or Anthropic, which may
+  retain it under its own policy. We neither control nor audit that. Private Research Mode
+  does not make you anonymous to the provider.
+- **Operators can read process memory.** While a request is in flight, our server holds the
+  key and the seeds in memory. "Never persisted" is not "never seen".
+- The cluster names are not end-to-end encrypted, and this is not a zero-knowledge design.
+
+### What is recorded
+
+Exactly one audit entry per attempt, with metadata only: provider, model, cluster count,
+outcome, and — on failure — one fixed internal error code. Never the key, the seeds, the
+names, or anything the provider said.
+
+If that audit entry cannot be written, the run is **discarded**: you get an error and no
+names, rather than a success we could not record.
+
+### What does not change
+
+The deterministic research pipeline — clustering, scoring, validators, hints — is untouched
+and remains the source of truth. If a private run fails, times out or returns something
+malformed, you keep exactly the result you already had.

@@ -61,6 +61,21 @@ export interface ResolvedConfig {
     rateLimitPerMinute: number;
     maxBodyBytes: number;
   };
+  /**
+   * Private research (slice 1): a server-wide beta switch. Off unless an operator sets
+   * PRIVATE_RESEARCH_ENABLED=true. There is no per-organization or per-workspace setting.
+   */
+  privateResearch: {
+    enabled: boolean;
+    /** Named providers only; a caller can never supply a host. */
+    providers: string[];
+    /** Fixed model allowlist per provider. */
+    models: { openai: string[]; anthropic: string[] };
+    timeoutMs: number;
+    maxClusters: number;
+    maxResponseBytes: number;
+    perMinute: number;
+  };
   accountTimezone: string;
   firstPartySource: string | null;
   adsBase: string | null;

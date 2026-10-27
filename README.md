@@ -1,4 +1,10 @@
-# AdTrack
+# AI AdTracker
+
+> AI AdTracker — The performance and context-hint research platform built specifically for
+> ChatGPT Ads. Ask plain-language questions about your ads and get clear answers. Research
+> conversation-shaped hints that actually map to revenue. Private Research Mode is
+> implemented and **off by default**; it stays hidden unless the operator sets
+> `PRIVATE_RESEARCH_ENABLED=true`.
 
 Ask one plain-language question about your ChatGPT ads and get one answer:
 spend → leads → customers → revenue → where. Plus a context-hint research

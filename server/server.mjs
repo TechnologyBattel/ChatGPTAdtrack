@@ -23,6 +23,7 @@ import { createTenancy } from './tenancy.mjs';
 import { createSources } from './sources.mjs';
 import { createEventIngest } from './events-v2.mjs';
 import { createAgencyApi } from './agency.mjs';
+import { createPrivateResearch } from './private-research.mjs';
 import { createHubSpotConnector } from './connectors/hubspot.mjs';
 import { createConnectorRouter } from './connectors/router.mjs';
 import { ConfigError, resolveConfig } from './config.mjs';
@@ -146,7 +147,11 @@ const outbox = createOutbox({
 const tenancy = createTenancy({ store });
 const sources = createSources({ store, tenancy });
 const ingestV2 = createEventIngest({ store });
-const agency = createAgencyApi({ tenancy, store, sources });
+// Private research exists only when an operator turns it on. The module is constructed
+// either way so the routes can answer with a stable 404 rather than a 500; `enabled` is what
+// app.mjs consults before authentication.
+const privateResearch = createPrivateResearch(config.privateResearch);
+const agency = createAgencyApi({ tenancy, store, sources, privateResearch });
 
 // ---------------------------------------------------------------- connectors
 // The router always exists so the UI can ask for a status and be told, precisely, what
@@ -192,6 +197,7 @@ const app = createApp({
   dataset: buildDataset,
   verifyIngest,
   agency,
+  privateResearch,
   sources,
   ingestV2,
   connectors,
@@ -210,6 +216,17 @@ const listener = createRequestListener({
   slowRequestMs: config.observability.slowRequestMs,
   logger,
 });
+
+// Unconditional: an operator must never have to guess whether private research is on, and
+// it must not depend on some unrelated feature (a connector) being configured.
+if (config.privateResearch.enabled) {
+  logger.info(
+    `[api] private research: ENABLED (providers: ${config.privateResearch.providers.join(', ')}). ` +
+      'Callers send their own provider key; it is used in memory only and never stored.',
+  );
+} else {
+  logger.info('[api] private research: disabled (PRIVATE_RESEARCH_ENABLED is not "true")');
+}
 
 if (config.connectors.hubspot.clientId) {
   logger.info(`[api] connectors: hubspot OAuth client loaded (read-only scopes)`);

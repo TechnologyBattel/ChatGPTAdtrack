@@ -21,5 +21,6 @@ export declare function createAgencyApi(opts: {
   sources?: unknown;
   /** Injected research implementation; defaults to createResearch over the same store. */
   research?: unknown;
+  privateResearch?: unknown;
   now?: () => number;
 }): AgencyApi;

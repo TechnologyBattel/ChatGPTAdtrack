@@ -2,6 +2,7 @@
   "name": "adtrack",
   "private": true,
   "version": "0.1.0",
+  "description": "AI AdTracker — performance and context-hint research for ChatGPT Ads. Plain-language answers from your own ad data.",
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0 --port 5173 --strictPort",

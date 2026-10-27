@@ -2,6 +2,7 @@
 // description and returns a status + body, so every rule can be tested without
 // opening a socket or touching a real ad account.
 
+import { PRIVATE_PATH } from './private-research.mjs';
 import { ApiError } from './errors.mjs';
 import { configuration, health, listAdGroups, listCampaigns, pushHintSet, track } from './core.mjs';
 import { WRITE_ROLES } from './auth.mjs';
@@ -44,6 +45,7 @@ export function createApp({
   dataset,
   verifyIngest = null,
   agency = null,
+  privateResearch = null,
   sources = null,
   ingestV2 = null,
   connectors = null,
@@ -172,6 +174,10 @@ export function createApp({
                 tenancy: Boolean(agency),
                 tenantIngest: Boolean(ingestV2 && sources),
                 legacyIngest: Boolean(verifyIngest),
+                // Advertised here so the client never has to probe a route that does not
+                // exist: a probe would show up as a console error in every browser session,
+                // and a hidden feature should not cost one.
+                privateResearch: Boolean(privateResearch?.enabled),
               },
             },
           };
@@ -390,6 +396,18 @@ export function createApp({
         // these proves membership before touching a record; none of them trusts an
         // organization id from the request without that check.
         if (agency && (path === '/api/orgs' || path.startsWith('/api/orgs/'))) {
+          // Approved status-code precedence: when private research is disabled, its routes
+          // must answer exactly like a route that does not exist, and they must do so BEFORE
+          // authentication — a signed-out probe must not be able to tell "feature off" from
+          // "feature on, you are not signed in" by receiving a 401. The body is fixed and
+          // never names a provider or a model.
+          //
+          // The trade-off is deliberate and documented in docs/OPERATIONS.md: the pair of
+          // responses does reveal whether the feature is enabled on this deployment. It
+          // reveals nothing else.
+          if (privateResearch && PRIVATE_PATH.test(path) && !privateResearch.enabled) {
+            throw new ApiError(404, 'not_configured', 'Private research is not configured on this server.');
+          }
           const principal = await requirePrincipal(req);
           const routed = await agency.handle({ method, path, body: req.body ?? {}, query: req.query, principal });
           if (routed.matched) return { status: routed.status ?? 200, body: routed.body };

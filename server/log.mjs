@@ -27,6 +27,15 @@ const FORBIDDEN_KEYS = new Set([
   'rawbody',
   'apikey',
   'api_key',
+  'api-key',
+  'x-api-key',
+  // Private research: the request body carries a provider key and the user's seeds. The
+  // body key is already refused above, but these names must be refused on their own so a
+  // caller cannot smuggle either through a named field.
+  'prompt',
+  'prompts',
+  'messages',
+  'seeds',
 ]);
 
 /** Strip a query string: `/api/orgs?email=a@b.com` logs as `/api/orgs`. */
