@@ -1,186 +1,238 @@
 # AI AdTracker
 
-> AI AdTracker — The performance and context-hint research platform built specifically for
-> ChatGPT Ads. Ask plain-language questions about your ads and get clear answers. Research
-> conversation-shaped hints that actually map to revenue. Private Research Mode is
-> implemented and **off by default**; it stays hidden unless the operator sets
-> `PRIVATE_RESEARCH_ENABLED=true`.
+AI-assisted ad attribution and campaign analytics for agencies and marketing teams.
 
-Ask one plain-language question about your ChatGPT ads and get one answer:
-spend → leads → customers → revenue → where. Plus a context-hint research
-workspace, because ChatGPT Ads has no keyword targeting.
+AI AdTracker answers plain-language questions about ChatGPT Ads performance — spend, leads,
+cost per lead, CAC, ROAS, pacing, country and device breakdowns, campaign and ad-group
+rankings, and why native and internal conversion counts differ — and gives you a
+context-hint research workspace, because ChatGPT Ads has no keyword targeting.
+
+> [!IMPORTANT]
+> **Project status: pre-release, not deployed.** The application runs and is covered by an
+> automated suite (unit, component, browser and supply-chain gates in CI), but it has never
+> been exercised against a real OpenAI Ads account, a real HubSpot portal or a real Firestore
+> project. Section [Status](#status) states exactly what is verified and what is not.
+
+## Contents
+
+- [Who it is for](#who-it-is-for)
+- [What it does today](#what-it-does-today)
+- [Status](#status)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Commands](#commands)
+- [Architecture](#architecture)
+- [Security and privacy](#security-and-privacy)
+- [Known limitations](#known-limitations)
+- [Documentation](#documentation)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Who it is for
+
+Agencies and in-house marketing teams that manage client campaigns and need to connect ad
+spend to qualified leads and revenue. The data model is agency-shaped: an **organization**
+contains one **workspace per client**, and each workspace holds its own sources, campaigns,
+topics, leads and members. Every request resolves its tenant from the caller's membership,
+never from the request body, so a client's data cannot be read from another client's session.
+
+## What it does today
+
+**Ask a question, get an answer.** One search box, no dashboards to configure. On submit the
+box docks to the top and the answer renders inline. Answers cover spend, impressions, clicks,
+CTR, CPC, CPM, leads, CPL, CAC, ROAS, budget pacing, country and device breakdowns, campaign
+and ad-group rankings, and the native-versus-internal attribution gap. Every answer lists its
+sources and a "where these numbers come from" panel. The question is stored in the URL
+(`?q=…&m=track`), so an answer is shareable and re-openable.
+
+**Context-hint research.** ChatGPT Ads has no keywords, no negatives and no search-terms
+report — only free-form context hints at ad-group level. The research workspace runs
+`seeds → PII scrub and dedupe → intent tag → semantic cluster → weighted score →
+conversation-shaped hints → validators → CSV or push`. The displayed score is the sum of its
+displayed parts and the panel prints the arithmetic. Pushing is two-step: a diff of current
+versus proposed hints, an explicit confirm, then an **Undo** that re-pushes the previous set.
+Every attempt, successful or not, is audited server-side.
+
+**Guided research reports.** In research mode the server computes a report from the
+workspace's own records and labels every section `observed`, `none found` or
+`not measurable yet`. There is no progress percentage anywhere; unmeasured metrics are shown
+as `unavailable`, never as zero.
+
+**Attribution and lead lifecycle.** A consent handshake (`/api/session` → `/api/consent` →
+`/api/track`) records low-value browser events, and a separate HMAC-authenticated endpoint
+(`/api/events`) accepts leads, orders and amounts server-to-server. Lead lifecycle,
+idempotency, qualification trust and attribution windows are documented in
+[docs/EVENT_SCHEMA.md](docs/EVENT_SCHEMA.md) and [docs/METRICS.md](docs/METRICS.md).
+
+**Read-only HubSpot connector.** Connect a HubSpot portal with two read scopes, import
+contacts as leads, and import a deal stage as a qualification only when the source is trusted
+and the stage is one you listed. Without credentials the feature is not hidden: the UI says
+the server is not configured and names the missing variables.
+
+**Private Research Mode (off by default).** An operator can enable a mode where an editor,
+admin or owner supplies a per-run provider key and seed terms. The key is held in memory for
+the request only, never persisted, never written to the audit log; seeds and responses are
+not stored. It stays disabled unless `PRIVATE_RESEARCH_ENABLED=true` is set on the server, and
+it uses fixed provider and model allowlists — there are no custom base URLs. See
+[docs/PRIVATE_RESEARCH_MODE.md](docs/PRIVATE_RESEARCH_MODE.md).
 
 ## Status
 
-Working single-page app on a single Node API. It runs on **demo data** until keys
-exist on the server, then switches to the **live** account. Every route except the
-tracking handshake (`/api/session`, `/api/consent`, `/api/track`) and the shallow
-`GET /api/health` requires an auth token. The one-page rule survives login: the sign-in
-screen is an overlay, not a route.
+**What is verified**
 
-Production refuses to start without `AUTH_MODE=firebase`; dev auth refuses to start at all
-when an ad account key is set on the same process, because dev auth hands a write role to
-anyone who can reach it. Token storage, the consent handshake, roles and the CSP are
-documented once, in [docs/SECURITY.md](docs/SECURITY.md).
+- Unit, component and server tests, type checking, linting, formatting, production build,
+  server guard checks, push/undo against a stub, supply-chain (licence, vulnerability, SBOM)
+  and a browser suite run in CI on every push and pull request.
+- The application is exercised end to end through its own HTTP server against a **stub** of
+  the OpenAI Ads API. That proves this repository's code, not OpenAI's contract.
+- The consent handshake, role enforcement, tenant isolation and the demo/live switch have
+  tests that fail when the behaviour regresses.
 
-`npm run verify` is the gate: lint, format, typecheck, tests, build, and three
-run-it-for-real checks (server guards, production start-up guards, push/undo e2e).
-CI runs the same command on every push.
+**What is not verified — treat as UNKNOWN**
 
-## Run it
+- Any call to the **real** OpenAI Ads API. No ad account or credentials exist for this
+  project, and the product never invents a connector.
+- **Firestore** storage: the same storage interface is tested against an in-memory store; the
+  Firestore implementation has never run against a real project.
+- A **live HubSpot installation**. The connector is tested against a fake provider only.
+- **Deployment, load and recovery**: nothing is deployed, no load test has been run, and no
+  backup or restore has been exercised.
+- **Private Research Mode against a real provider** — the request path is implemented and
+  tested with a stub provider; it has not been run with a real key.
+- Legal sufficiency of the consent and retention choices. A consent banner is not evidence of
+  GDPR or DPDP compliance.
+
+The honest per-item breakdown, including the gaps that remain open on purpose, is in
+[docs/BASELINE_AND_GAPS.md](docs/BASELINE_AND_GAPS.md) and
+[docs/STAGING.md](docs/STAGING.md).
+
+## Quick start
+
+Requires Node.js `>=22` (see `.nvmrc`) and npm `>=10`.
 
 ```bash
-npm install
-cp .env.example .env     # fill in the keys you actually have
+npm ci                   # install exactly what CI installs
+cp .env.example .env     # fill in only the keys you actually have
 npm run api              # API on 0.0.0.0:8787
 npm run dev              # web app on 0.0.0.0:5173, proxies /api
-npm run verify           # the full gate (lint, format, types, tests, build, guards, push E2E)
-npm run e2e              # browser tests; requires `npx playwright install chromium`
 ```
 
-Open the app. The bar under the search box says **Demo data** or
-**live · <account>**; click it for key presence, auth state and a retry.
+Open http://localhost:5173. The bar under the search box reads **Demo data** or
+**live · <account>**; click it to see key presence, auth state and a retry control.
 
-## How it works
+With no keys configured the app runs on **deterministic demo data**. It switches to the live
+account only when keys exist on the server. Demo mode is a real, tested mode — the numbers are
+deterministic fixtures, not fabricated live responses.
+
+## Configuration
+
+All secrets are server-side. `VITE_*` variables are public by definition, so no secret uses
+that prefix; the browser never holds an ad-account or provider key. Every variable, its
+default and its effect is listed in `.env.example` and [docs/OPERATIONS.md](docs/OPERATIONS.md).
+
+The two settings that matter for a first run:
+
+| Variable | Effect |
+|---|---|
+| `AUTH_MODE` | `dev` hands a write role to anyone who can reach the server. Production refuses to start unless this is `firebase`, and dev auth refuses to start at all when an ad-account key is set on the same process. |
+| `STORAGE` | `memory` keeps everything in-process; `firestore` needs a Google Cloud project. |
+
+## Commands
+
+| Command | What it does |
+|---|---|
+| `npm ci` | Clean install from `package-lock.json` |
+| `npm run verify` | The full gate: lint, format check, typecheck, unit tests, build, server guard checks, production start-up guards, push/undo against a stub, Dockerfile static checks, supply-chain self-test |
+| `npm run test` | Vitest unit and component tests |
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm run lint` / `npm run format:check` | ESLint / Prettier |
+| `npm run build` | Typecheck then production bundle into `dist/` |
+| `npm run e2e` | Playwright browser suite; run `npx playwright install chromium` once first |
+| `npm run supply-chain` | Licence, vulnerability and SBOM gate against `security/*.json` allowlists |
+| `npm run load:smoke` | Local smoke load script — a tool, not a capacity measurement |
+
+CI runs the same checks in four jobs: verify, supply-chain, browser end-to-end, and a container
+job that builds the image, asserts it runs as a non-root user and checks graceful shutdown.
+
+## Architecture
 
 ```
 browser ──/api/*──▶ server/server.mjs ──▶ OpenAI Ads API
-                     keys + consent secret
+                     keys + consent secret      HubSpot (read-only)
+                     storage interface ──▶ memory | Firestore
 ```
 
-The browser never holds an OpenAI key. `VITE_*` variables are public by
-definition, so no secret uses that prefix.
+A React 18 single-page app (Vite, TypeScript strict, Tailwind) served from the same origin as
+a Node HTTP API with no framework. Same origin is a decision, not a default: no CORS headers
+are sent, the CSP stays `connect-src 'self'`, and the page only ever calls relative URLs.
+`firebase-admin` is an optional dependency imported only when `AUTH_MODE=firebase`, so demo
+mode and the test suite run without it.
 
-| Endpoint | Auth | Notes |
-|---|---|---|
-| `GET /api/health` | public | `{ok, mode}` only; details need a token |
-| `POST /api/session` | public, origin-checked | short-lived session, step 1 of consent |
-| `POST /api/consent` | session id | returns a signed, single-use consent id |
-| `POST /api/track` | consent id | **low-value browser events only**; origin allowlist, rate limit, body cap |
-| `POST /api/events` | HMAC ingest key | leads, orders and amounts, server-to-server, rotatable key |
-| `GET /api/audit` | token | push history, failures included (`?ok=false`) |
-| `GET /api/dataset` | token | insights → dataset in integer minor units |
-| `GET /api/adgroups` | token | current hint sets |
-| `POST /api/adgroups/:id/hints` | token, **admin/owner** | replaces hints, returns the previous set |
-| `POST /api/dev/session` | dev mode only | 404 in production |
+The endpoint list, guards and the not-verified notes live in [docs/API.md](docs/API.md).
 
-Details in [docs/API.md](docs/API.md).
+## Security and privacy
 
-## Multi-tenant foundation
+- The browser never receives an ad-account or provider key; keys live in server environment
+  secrets only.
+- Production refuses to start without Firebase auth, and the dev-auth configuration refuses to
+  run alongside real ad-account credentials.
+- Tenant isolation is server-derived: organization and workspace ids in a URL must match the
+  caller's membership, and a foreign or nonexistent id returns an identical `404`.
+- Roles are read from the server's own response (`auth.canWrite`), never guessed client-side.
+- Native and internal attribution are never blended; money is stored as integer minor units.
+- Nothing is pushed to an ad account without a diff, an explicit confirm and an audit trail.
 
-The app now sits on an agency-shaped model: **organization → workspace (one per client) →
-sources, campaigns, topics, leads**. Every route under `/api/orgs` resolves the tenant from
-the caller's membership, never from the request, and a foreign or nonexistent id returns an
-identical `404`. The **Workspace** button in the header opens a read-only panel showing the
-workspace's currency/zone/markets, your role and permissions, the summary, and the
-campaigns, topics, leads and sources the server actually holds — with unmeasured metrics
-labelled `unavailable` rather than shown as zero.
+Details, including what is verified versus assumed: [docs/SECURITY.md](docs/SECURITY.md) and
+[docs/PRIVACY.md](docs/PRIVACY.md). To report a vulnerability, see [SECURITY.md](SECURITY.md) —
+please do not open a public issue for a security problem.
 
-| Document | What it settles |
-|---|---|
-| [docs/BASELINE_AND_GAPS.md](docs/BASELINE_AND_GAPS.md) | What the baseline contained, what was fixed, what is still UNKNOWN |
-| [docs/AGENCY_MODEL.md](docs/AGENCY_MODEL.md) | Hierarchy, roles, permissions, every agency route |
-| [docs/EVENT_SCHEMA.md](docs/EVENT_SCHEMA.md) | The eight-step lead lifecycle, idempotency, qualification trust, attribution |
-| [docs/CONNECTORS.md](docs/CONNECTORS.md) | The connector contract — documented only; no provider integration exists |
-| [docs/GLOBALIZATION.md](docs/GLOBALIZATION.md) | Countries, currencies, IANA zones, DST |
-| [docs/DATA_MODEL.md](docs/DATA_MODEL.md) | Collections, indexes, migrations, rollback |
+## Known limitations
 
-## The interface
+- Deterministic demo data until keys are configured; there is no live account in this repo.
+- No keyword targeting exists in ChatGPT Ads, so "research" means context hints, and the
+  scoring is transparent arithmetic — it does not use first-party conversion data.
+- The HubSpot connector is read-only and covers contacts and one deal stage.
+- Private Research Mode is disabled by default and is not a general-purpose LLM proxy.
+- No load, capacity or recovery numbers are claimed anywhere in this repository.
+- Third-party licence obligations are summarised in
+  [docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md); it is a report, not a legal opinion.
 
-One page, modelled on search rather than a dashboard. On submit the box docks to the
-top and the answer renders inline — no routes, no tabs. The question lives in the URL
-(`?q=…&m=track`), so answers are shareable, and an unrecognised question falls back to
-a full-funnel overview.
+## Documentation
 
-Answers cover spend, leads, CPL, CAC, ROAS, pacing, country, device, campaign and
-ad-group rankings, plus "why do native and internal conversions differ". Every answer
-carries its sources and a "where these numbers come from" panel.
-
-## Guided research (Phase 2)
-
-In research mode the page opens a guided journey above the deterministic hint workspace:
-
-1. pick a goal (attribution, lead data, topics, sources);
-2. the **server** computes a report from this workspace's own records;
-3. the report shows what was counted, what was not measured, and what the product cannot
-   know — plus a saved snapshot you can reopen later.
-
-Every section is labelled `observed`, `none found` or `not measurable yet`. There is no
-progress percentage anywhere: while a request is open the page shows elapsed seconds and
-the server's own description of what that request reads.
-
-## CRM connector (HubSpot, read-only)
-
-`GET/POST /api/orgs/:org/workspaces/:ws/connectors/hubspot…` connect a HubSpot portal with
-two read scopes (`crm.objects.contacts.read`, `crm.objects.deals.read`), import contacts as
-leads, and import a deal stage as a qualification only when the source is trusted and the
-stage is one you listed. Tokens are sealed at rest; the webhook is verified with HubSpot's
-v3 signature. Setup and the exact verification status are in
-[`docs/CONNECTORS.md`](./CONNECTORS.md) §7.
-
-Without `HUBSPOT_CLIENT_ID`, `HUBSPOT_CLIENT_SECRET`, `HUBSPOT_REDIRECT_URI` and
-`CONNECTOR_ENCRYPTION_KEY` the feature is *not hidden*: the UI says the server is not
-configured and names the missing variables.
-
-## Research (the honest version of "keyword research")
-
-ChatGPT Ads has no keyword box, no negatives and no search-terms report — only
-free-form **context hints** at ad-group level. So research is:
-
-`seeds → PII scrub + dedupe → intent tag → semantic cluster → weighted score → conversation-shaped hints → validators → CSV or push`
-
-Pushing is a two-step operation: a diff modal (current vs proposed, with counts), an
-explicit confirm, then an **Undo** that re-pushes the previous set. Every attempt —
-successful or failed, with the actor and the upstream error — is audited server-side.
-The push control is disabled for `analyst`/`viewer`, using the role the server reports in
-`/api/health` (`auth.canWrite`), not a client-side guess.
-
-The score shown next to a cluster is the sum of its displayed parts (relevance, intent,
-size, coverage, safety × weights), and the panel prints the arithmetic. It does not claim
-to use first-party conversion data, because none is connected: no fabricated inputs, no
-made-up "researchable seeds" count.
-
-## Stack
-
-React 18 · Vite 6 · TypeScript (strict) · Tailwind 3 · Vitest + jsdom ·
-Node 22 API (`node:http`, no framework) · ESLint + Prettier · GitHub Actions.
-
-`firebase-admin` is an **optionalDependency**, imported only when `AUTH_MODE=firebase`;
-the demo and the test suite run without it. The browser signs in over Firebase's public
-REST endpoints (no SDK in the bundle) and keeps the token in `sessionStorage` — never
-`localStorage`, never a cookie. Consent recording and push history sit behind one storage
-interface with in-memory and Firestore implementations.
-
-## Deploy
-
-The API is stateless and ships as a container (non-root, healthcheck, tini):
-
-```bash
-gcloud run deploy adtrack-api --source . --region asia-south1 \
-  --set-secrets OPENAI_ADS_API_KEY=ads-key:latest,OPENAI_CONVERSIONS_API_KEY=capi-key:latest,OPENAI_PIXEL_ID=pixel-id:latest,CONSENT_SECRETS=consent-secrets:latest,INGEST_KEYS=ingest-keys:latest \
-  --set-env-vars AUTH_MODE=firebase,STORAGE=firestore,TRUST_PROXY=1
-```
-
-Serve `dist/` from the **same origin** as the API, reverse-proxying `/api` to the
-container. Same origin is a decision, not a default: no CORS headers are sent, so the
-browser's CSP stays `connect-src 'self'` and the page only ever calls relative URLs.
-Putting the API on another domain means adding CORS *and* widening the CSP together.
-
-## Docs
-
-| File | Contents |
+| Document | Contents |
 |---|---|
 | [docs/PLAN.md](docs/PLAN.md) | Review, architecture, slices, risks |
-| [docs/FEATURES.md](docs/FEATURES.md) | Feature research: what shipped, demo vs live-verified |
-| [docs/API.md](docs/API.md) | Endpoints, guards, deployment, what is not verified |
-| [docs/SECURITY.md](docs/SECURITY.md) | Auth, roles, consent handshake, token storage, CSP, storage interface, verified/unverified |
+| [docs/API.md](docs/API.md) | Endpoints, guards, deployment, unverified areas |
+| [docs/SECURITY.md](docs/SECURITY.md) | Auth, roles, consent handshake, token storage, CSP |
+| [docs/PRIVACY.md](docs/PRIVACY.md) | Data map, consent, retention, roles |
+| [docs/OPERATIONS.md](docs/OPERATIONS.md) | Environment, runbook, recovery, limitations |
+| [docs/BASELINE_AND_GAPS.md](docs/BASELINE_AND_GAPS.md) | What the baseline contained, what is still UNKNOWN |
+| [docs/FEATURES.md](docs/FEATURES.md) | Feature research: what shipped and how it was verified |
+| [docs/AGENCY_MODEL.md](docs/AGENCY_MODEL.md) | Hierarchy, roles, permissions, agency routes |
+| [docs/EVENT_SCHEMA.md](docs/EVENT_SCHEMA.md) | Lead lifecycle, idempotency, attribution |
+| [docs/CONNECTORS.md](docs/CONNECTORS.md) | Connector contract and HubSpot verification status |
+| [docs/DATA_MODEL.md](docs/DATA_MODEL.md) | Collections, indexes, migrations, rollback |
 | [docs/METRICS.md](docs/METRICS.md) | Metric dictionary and attribution windows |
 | [docs/TRACKING_PLAN.md](docs/TRACKING_PLAN.md) | Events, dedupe, cookies, delivery guards |
-| [docs/PRIVACY.md](docs/PRIVACY.md) | Data map, consent, retention, roles |
+| [docs/GLOBALIZATION.md](docs/GLOBALIZATION.md) | Countries, currencies, IANA zones, DST |
 | [docs/DECISIONS.md](docs/DECISIONS.md) | Decision log |
-| [docs/WORKSTREAMS.md](docs/WORKSTREAMS.md) | How the build was split, and the contracts |
+| [docs/STAGING.md](docs/STAGING.md) | What would have to be true for staging to be validated |
+| [docs/PRIVATE_RESEARCH_MODE.md](docs/PRIVATE_RESEARCH_MODE.md) | Private research scope, controls and disclosures |
+| [docs/PHASE2_REPORT.md](docs/PHASE2_REPORT.md) · [docs/PHASE3_PRODUCTION_READINESS_REPORT.md](docs/PHASE3_PRODUCTION_READINESS_REPORT.md) · [docs/PHASE4_STAGING_VALIDATION_REPORT.md](docs/PHASE4_STAGING_VALIDATION_REPORT.md) | Historical phase evidence, kept as dated records rather than current claims |
 
-Rules of engagement, all enforced in code: no secrets in the repo; the browser never
-sees an API key; native and internal attribution are never blended; money is integer
-minor units; geography is aggregated to city level; nothing is pushed to an ad account
-without a diff, a confirm and an audit trail.
+## Contributing
+
+Development setup, conventions and pull-request expectations are in
+[CONTRIBUTING.md](CONTRIBUTING.md). Participation is covered by
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
+## License
+
+**No license has been chosen yet.** This repository contains no `LICENSE` file and no license
+statement in `package.json`, so no rights to reuse, modify or redistribute this code are
+granted. The owner is deciding between a permissive open-source license, Apache-2.0, and a
+proprietary/no-public-license model. Until that decision is recorded, treat the code as
+all-rights-reserved.
+
+Third-party dependencies are separately licensed; see
+[docs/THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md).
